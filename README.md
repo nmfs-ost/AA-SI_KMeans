@@ -55,7 +55,7 @@ aa-kmap <config.yaml|config.json>
 
 ---
 
-## 📄 2. Create from `.raw` or `.nc` File (New Configuration)
+## 📄 2. Create directory containing new assets : config.yaml / config.json / echograms / clustermaps / metadata from `.raw` or `.nc` File (New Configuration)
 
 ```bash
 aa-kmap <input.raw|input.nc> 
