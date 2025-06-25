@@ -76,8 +76,8 @@ Pre-clustering Model:
 Plotting Options:
   --color_map COLOR_MAP
                         Matplotlib colormap to use (default: jet).
-  --plot_clustermaps    Plot and save cluster maps.
-  --plot_echograms      Plot and save echograms.
+  --plot_clustermaps    Plot cluster maps.
+  --plot_echograms      Plot echograms.
 
 Noise Removal:
   --remove_noise        Enable noise removal.
@@ -101,7 +101,7 @@ Data Reduction Options:
 
 Output:
   --save_path SAVE_PATH
-                        Path to save the resulting configuration or processed file. If none is provided the current path will be used.
+                        Path to save the resulting configuration or processed file. If none is provided the current path will be used. This will save a directory. Within it will exist all resources including the encoded (in filename) configuration file, echograms and clustermaps.
 
 ```
 
