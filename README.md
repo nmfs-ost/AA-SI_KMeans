@@ -39,9 +39,9 @@ $ aa-kmap <input_file.raw|.nc> [--n_clusters <int>] [--frequency_list <list>] [-
 ---
 
 ```bash
-usage: aa-kmap <raw_file|config.yaml|config.json> [options]
+usage: aa-kmap <data.raw|data.nc|config.yaml|config.json> [options]
 
-KMeans Inter-Frequency Mapper for Acoustic Data Clustering
+KMeans Inter-Frequency Clustering for Acoustic Data
 
 positional arguments:
   input_path            Path to either a raw file or a YAML/JSON configuration file.
