@@ -7,7 +7,7 @@ This program accepts either a **raw data file** or a **YAML/JSON configuration f
 
 ---
 
-### 🗂️ 1. Using a YAML or JSON Configuration
+### 🗂️ 1. Using a YAML or JSON Configuration (Loading/Reading and Existing Config)
 
 ```bash
 $ aa-kmap <config_file.yaml|.json> [--n_clusters <int>] [--frequency_list <list>] [--save_path <output_path>]
@@ -23,7 +23,7 @@ $ aa-kmap <config_file.yaml|.json> [--n_clusters <int>] [--frequency_list <list>
 
 ---
 
-### 📄 2. Using a Raw File / NC File
+### 📄 2. Using a Raw File / NC File (Creating a new Config)
 
 ```bash
 $ aa-kmap <input_file.raw|.nc> [--n_clusters <int>] [--frequency_list <list>] [--save_path <output_path>]
