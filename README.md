@@ -14,7 +14,36 @@ In both modes, **optional arguments** may override configuration settings, and t
 ## 🗂️ 1. Load from YAML/JSON Config (Existing Configuration)
 
 ```bash
-aa-kmap config.yaml [--n_clusters <int>] [--frequency_list <list>] [--save_path <output_path>]
+aa-kmap <config.yaml|config.json> 
+  [--raw_path <str>] 
+  [--nc_path <str>] 
+  [--yaml_path <str>] 
+  [--json_path <str>] 
+  [--region_files <list of str>] 
+  [--line_files <list of str>] 
+  [--run_kmeans <bool>] 
+  [--n_clusters <int>] 
+  [--init <str>] 
+  [--max_iter <int>] 
+  [--n_init <int>] 
+  [--random_state <int>] 
+  [--frequency_list <list of str>] 
+  [--pre_clustering_model <str>] 
+  [--color_map <str>] 
+  [--plot_clustermaps] 
+  [--plot_echograms] 
+  [--remove_noise] 
+  [--ping_time_begin <datetime str>] 
+  [--ping_time_end <datetime str>] 
+  [--range_sample_begin <int>] 
+  [--range_sample_end <int>] 
+  [--data_reduction_type <str>] 
+  [--ping_num <int>] 
+  [--ping_time_bin <str>] 
+  [--range_meter_bin <float>] 
+  [--range_sample_num <int>] 
+  [--save_path <str>]
+
 ```
 
 - Loads settings from the specified configuration file.
@@ -29,7 +58,36 @@ aa-kmap config.yaml [--n_clusters <int>] [--frequency_list <list>] [--save_path 
 ## 📄 2. Create from `.raw` or `.nc` File (New Configuration)
 
 ```bash
-aa-kmap data.raw [--n_clusters <int>] [--frequency_list <list>] [--save_path <output_path>]
+aa-kmap <input.raw|input.nc> 
+  [--raw_path <str>] 
+  [--nc_path <str>] 
+  [--yaml_path <str>] 
+  [--json_path <str>] 
+  [--region_files <list of str>] 
+  [--line_files <list of str>] 
+  [--run_kmeans <bool>] 
+  [--n_clusters <int>] 
+  [--init <str>] 
+  [--max_iter <int>] 
+  [--n_init <int>] 
+  [--random_state <int>] 
+  [--frequency_list <list of str>] 
+  [--pre_clustering_model <str>] 
+  [--color_map <str>] 
+  [--plot_clustermaps] 
+  [--plot_echograms] 
+  [--remove_noise] 
+  [--ping_time_begin <datetime str>] 
+  [--ping_time_end <datetime str>] 
+  [--range_sample_begin <int>] 
+  [--range_sample_end <int>] 
+  [--data_reduction_type <str>] 
+  [--ping_num <int>] 
+  [--ping_time_bin <str>] 
+  [--range_meter_bin <float>] 
+  [--range_sample_num <int>] 
+  [--save_path <str>]
+
 ```
 
 - Generates a base configuration from the raw/NetCDF file.
