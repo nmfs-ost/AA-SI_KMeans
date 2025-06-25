@@ -38,7 +38,7 @@ $ aa-kmap <input_file.raw|.nc> [--n_clusters <int>] [--frequency_list <list>] [-
 
 ---
 
-
+```bash
 usage: aa-kmap <raw_file|config.yaml|config.json> [options]
 
 KMeans Inter-Frequency Mapper for Acoustic Data Clustering
@@ -102,7 +102,7 @@ Output:
   --save_path SAVE_PATH
                         Path to save the resulting configuration or processed file.
 
-
+```
 
 ## 🧰 Available Configuration Options/Overrides
 
