@@ -1,5 +1,7 @@
 # `aa-kmap`
 
+![Project Logo](assets/logo.png)
+
 ## 🔧 Program Behavior
 
 The `aa-kmap` program performs **K-Means inter-frequency clustering** on acoustic data. It accepts either a **raw data file** or a **YAML/JSON configuration file** as its first (positional) argument. Based on the input type, the program runs in one of two modes:
