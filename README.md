@@ -1,6 +1,8 @@
 # `aa-kmap`
 
-![Project Logo](assets/logo.png)
+<p align="center">
+  <img src="assets/logo.png" alt="Project Logo" width="70%">
+</p>
 
 ## 🔧 Program Behavior
 
