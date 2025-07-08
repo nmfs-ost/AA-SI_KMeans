@@ -1,157 +1,201 @@
+# `aa-kmap`
 
-# aa-kmap
+<p align="center">
+  <img src="assets/logo.png" alt="Project Logo" width="70%">
+</p>
 
 ## 🔧 Program Behavior
 
-This program accepts either a **raw data file** or a **YAML/JSON configuration file** as its first (positional) argument. Based on the type of input provided, the program branches into one of two execution modes. In both cases, optional CLI arguments can be supplied to **override settings**, and a new configuration file is saved with those overrides encoded in the filename.
+The `aa-kmap` program performs **K-Means inter-frequency clustering** on acoustic data. It accepts either a **raw data file** or a **YAML/JSON configuration file** as its first (positional) argument. Based on the input type, the program runs in one of two modes:
+
+- **Existing Configuration Mode**: Load and modify an existing YAML/JSON config.
+- **New Configuration Mode**: Generate a new config from raw input data.
+
+In both modes, **optional arguments** may override configuration settings, and the modified config is saved with the overrides encoded in the filename.
 
 ---
 
-### 🗂️ 1. Using a YAML or JSON Configuration
+## 🗂️ 1. Load from YAML/JSON Config (Existing Configuration)
 
 ```bash
-$ aa-kmap <config_file.yaml|.json> [--n_clusters <int>] [--frequency_list <list>] [--save_path <output_path>]
+aa-kmap <config.yaml|config.json> 
+  [--raw_path <str>] 
+  [--nc_path <str>] 
+  [--yaml_path <str>] 
+  [--json_path <str>] 
+  [--region_files <list of str>] 
+  [--line_files <list of str>] 
+  [--run_kmeans <bool>] 
+  [--n_clusters <int>] 
+  [--init <str>] 
+  [--max_iter <int>] 
+  [--n_init <int>] 
+  [--random_state <int>] 
+  [--frequency_list <list of str>] 
+  [--pre_clustering_model <str>] 
+  [--color_map <str>] 
+  [--plot_clustermaps] 
+  [--plot_echograms] 
+  [--remove_noise] 
+  [--ping_time_begin <datetime str>] 
+  [--ping_time_end <datetime str>] 
+  [--range_sample_begin <int>] 
+  [--range_sample_end <int>] 
+  [--data_reduction_type <str>] 
+  [--ping_num <int>] 
+  [--ping_time_bin <str>] 
+  [--range_meter_bin <float>] 
+  [--range_sample_num <int>] 
+  [--save_path <str>]
+
 ```
 
-- Loads the configuration from the specified file.
-- Runs the **KMEANSInterFrequency Algorithm**, which includes:
-  - **MFRC**: Mean Frequency Response Clustering
-  - **MADFRC**: Mean Absolute Difference Frequency Response Clustering
-- Any additional CLI arguments act as **overrides** to the loaded configuration.
-- A new configuration file is saved, with parameter changes embedded in the filename (e.g., cluster count or frequency list).
-- This allows for incremental refinement through a traceable chain of configuration versions.
+- Loads settings from the specified configuration file.
+- Executes the **KMeans Inter-Frequency Algorithm**, which includes:
+  - `MIFRC`: Mean Inter-Frequency Response Clustering
+  - `MADIFRC`: Mean Absolute Differences Inter-Frequency Response Clustering
+- CLI arguments override config values as needed.
+- A new configuration file is saved with modified parameters reflected in the filename.
 
 ---
 
-### 📄 2. Using a Raw File / NC File
+## 📄 2. Create directory containing new assets : config.yaml / config.json / echograms / clustermaps / metadata from `.raw` or `.nc` File (New Configuration)
 
 ```bash
-$ aa-kmap <input_file.raw|.nc> [--n_clusters <int>] [--frequency_list <list>] [--save_path <output_path>]
+aa-kmap <input.raw|input.nc> 
+  [--raw_path <str>] 
+  [--nc_path <str>] 
+  [--yaml_path <str>] 
+  [--json_path <str>] 
+  [--region_files <list of str>] 
+  [--line_files <list of str>] 
+  [--run_kmeans <bool>] 
+  [--n_clusters <int>] 
+  [--init <str>] 
+  [--max_iter <int>] 
+  [--n_init <int>] 
+  [--random_state <int>] 
+  [--frequency_list <list of str>] 
+  [--pre_clustering_model <str>] 
+  [--color_map <str>] 
+  [--plot_clustermaps] 
+  [--plot_echograms] 
+  [--remove_noise] 
+  [--ping_time_begin <datetime str>] 
+  [--ping_time_end <datetime str>] 
+  [--range_sample_begin <int>] 
+  [--range_sample_end <int>] 
+  [--data_reduction_type <str>] 
+  [--ping_num <int>] 
+  [--ping_time_bin <str>] 
+  [--range_meter_bin <float>] 
+  [--range_sample_num <int>] 
+  [--save_path <str>]
+
 ```
 
-- Automatically generates a base configuration from the raw data.
-- Optional arguments customize the generated configuration.
-- A new YAML file is created and saved, usually with a timestamp.
-- This mode is ideal for initial exploration and parameter tuning from scratch.
-
-> 📝 In both modes, the program handles all config and metadata file creation internally — users only need to manage file paths.
+- Generates a base configuration from the raw/NetCDF file.
+- CLI options customize the new configuration.
+- A YAML file is saved with a timestamp or encoded parameter name.
+- Use this mode for parameter exploration or building a config from scratch.
 
 ---
 
+## 📌 Usage Overview
 
-usage: aa-kmap <raw_file|config.yaml|config.json> [options]
-
-KMeans Inter-Frequency Mapper for Acoustic Data Clustering
-
-positional arguments:
-  input_path            Path to either a raw file or a YAML/JSON configuration file.
-
-optional arguments:
-  -h, --help            Show this help message and exit.
-  --raw_path RAW_PATH   Path to the input raw data file.
-  --nc_path NC_PATH     Path to NetCDF or processed data file.
-  --yaml_path YAML_PATH Path to save or load the YAML configuration.
-  --region_files REGION_FILES [REGION_FILES ...]
-                        List of EVR region files to include.
-  --line_files LINE_FILES [LINE_FILES ...]
-                        List of EVL line files to include.
-
-KMeans Options:
-  --run_kmeans          Flag to execute the KMeans clustering algorithm.
-  --n_clusters N_CLUSTERS
-                        Number of clusters to generate (default: 8).
-  --init INIT_METHOD    Initialization method for centroids (default: k-means++).
-  --max_iter MAX_ITER   Maximum number of iterations for a single run (default: 300).
-  --n_init N_INIT       Number of time the k-means algorithm will be run (default: 10).
-  --random_state RANDOM_STATE
-                        Seed for reproducibility (default: 42).
-  --frequency_list FREQUENCY_LIST [FREQUENCY_LIST ...]
-                        List of frequencies to use, e.g., 38kHz 70kHz 120kHz.
-
-Pre-clustering Model:
-  --pre_clustering_model MODEL_NAME
-                        Pre-clustering model type (default: DIRECT).
-
-Plotting Options:
-  --color_map COLOR_MAP
-                        Matplotlib colormap to use (default: jet).
-  --plot_clustermaps    Plot and save cluster maps.
-  --plot_echograms      Plot and save echograms.
-
-Noise Removal:
-  --remove_noise        Enable noise removal.
-
-Ping & Range Selection:
-  --ping_time_begin PING_TIME_BEGIN
-  --ping_time_end PING_TIME_END
-  --range_sample_begin RANGE_SAMPLE_BEGIN
-  --range_sample_end RANGE_SAMPLE_END
-
-Data Reduction Options:
-  --data_reduction_type TYPE
-                        Type of data reduction (e.g., sample_number).
-  --ping_num PING_NUM   Number of pings to include (default: 1).
-  --ping_time_bin TIME_BIN
-                        Binning interval for ping time (default: 2S).
-  --range_meter_bin METER_BIN
-                        Binning resolution for range in meters (default: 2).
-  --range_sample_num SAMPLE_NUM
-                        Number of range samples (default: 1).
-
-Output:
-  --save_path SAVE_PATH
-                        Path to save the resulting configuration or processed file.
-
-
-
-## 🧰 Available Configuration Options/Overrides
-
-```yaml
-raw_path: str
-nc_path: str
-yaml_path: str
-
-region_files:
-  - "resources/zooplankton_patch.EVR"
-  - "resources/zooplankton_patch1.EVR"
-  - "resources/zooplankton_patch2.EVR"
-
-line_files:
-  - "resources/zooplankton_patch0.EVL"
-  - "resources/zooplankton_patch2.EVL"
-
-run_kmeans: true
-n_clusters: 8
-init: "k-means++"
-max_iter: 300
-n_init: 10
-random_state: 42
-
-frequency_list:
-  - "38kHz"
-  - "70kHz"
-  - "120kHz"
-  - "18kHz"
-  - "200kHz"
-
-pre_clustering_model:
-  model: "DIRECT"
-
-color_map: "jet"
-plot_clustermaps: true
-plot_echograms: true
-
-noise_removal:
-  remove_noise: false
-
-ping_time_begin: null
-ping_time_end: null
-range_sample_begin: null
-range_sample_end: null
-
-data_reduction_type: "sample_number"
-ping_num: 1
-ping_time_bin: "2S"
-range_meter_bin: 2
-range_sample_num: 1
+```bash
+usage: aa-kmap <input_file.raw|.nc|config.yaml|.json> [options]
 ```
+
+KMeans Inter-Frequency Clustering for Acoustic Data.
+
+### 🔣 Positional Arguments
+
+| Argument     | Description                                                   |
+|--------------|---------------------------------------------------------------|
+| `input_path` | Path to either a raw data file (`.raw`, `.nc`) or a config file (`.yaml`, `.json`). |
+
+---
+
+### ⚙️ Optional Arguments
+
+| Argument                     | Description |
+|-----------------------------|-------------|
+| `-h`, `--help`              | Show help message and exit. |
+| `--raw_path`                | Path to the input raw data file. |
+| `--nc_path`                 | Path to NetCDF or processed data file. |
+| `--yaml_path`               | Path to save or load the YAML configuration. |
+| `--json_path`               | Path to save or load the JSON configuration. |
+| `--region_files`            | List of `.EVR` region files to include. |
+| `--line_files`              | List of `.EVL` line files to include. |
+
+---
+
+### 📊 KMeans Clustering Options
+
+| Argument              | Description |
+|-----------------------|-------------|
+| `--run_kmeans`        | Flag to run the KMeans algorithm (`true`, `false`, etc.). |
+| `--n_clusters`        | Number of clusters to create (default: `8`). |
+| `--init`              | Initialization method (default: `k-means++`). |
+| `--max_iter`          | Max iterations for KMeans (default: `300`). |
+| `--n_init`            | Number of times KMeans is run (default: `10`). |
+| `--random_state`      | Random seed (default: `42`). |
+| `--frequency_list`    | List of frequencies to use, e.g., `38kHz 70kHz 120kHz`. |
+
+---
+
+### 🧠 Pre-Clustering Model
+
+| Argument                  | Description |
+|---------------------------|-------------|
+| `--pre_clustering_model` | Pre-clustering model type (`MADIFRC` by default). |
+
+---
+
+### 🎨 Plotting Options
+
+| Argument              | Description |
+|-----------------------|-------------|
+| `--color_map`         | Matplotlib colormap (default: `jet`). |
+| `--plot_clustermaps`  | Plot the cluster maps. |
+| `--plot_echograms`    | Plot the echograms. |
+
+---
+
+### 🔇 Noise Removal
+
+| Argument           | Description |
+|--------------------|-------------|
+| `--remove_noise`   | Enable noise removal logic. |
+
+---
+
+### 🧭 Ping & Range Selection
+
+| Argument              | Description |
+|-----------------------|-------------|
+| `--ping_time_begin`   | Start time for ping sub-selection. |
+| `--ping_time_end`     | End time for ping sub-selection. |
+| `--range_sample_begin`| Starting range sample index. |
+| `--range_sample_end`  | Ending range sample index. |
+
+---
+
+### 📉 Data Reduction Options
+
+| Argument                 | Description |
+|--------------------------|-------------|
+| `--data_reduction_type`  | Type of reduction, e.g., `sample_number`. |
+| `--ping_num`             | Number of pings to include (default: `1`). |
+| `--ping_time_bin`        | Time binning interval (default: `2S`). |
+| `--range_meter_bin`      | Range bin size in meters (default: `2`). |
+| `--range_sample_num`     | Number of samples per range bin (default: `1`). |
+
+---
+
+### 💾 Output
+
+| Argument        | Description |
+|-----------------|-------------|
+| `--save_path`   | Directory to save output, config, and plots. If omitted, current working directory is used. |
