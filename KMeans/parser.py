@@ -223,7 +223,7 @@ def main():
             ],
             "remove_noise": False,
             "run_kmeans": True,
-            "save_path": "/home/mryan/Documents/GitHub/AA-SI_KMeans/examples/aa-kmap_exports",
+            "save_path": str(Path.home()),
             "scikit_learn_version": scikit_learn_version,
             "scipy_version": scipy_version,
             "xarray_version": xarray_version,
