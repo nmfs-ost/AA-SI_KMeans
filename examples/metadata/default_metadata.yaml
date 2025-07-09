@@ -33,7 +33,7 @@ python_version: 3.8.10
 random_state: 42
 range_sample_begin: null
 range_sample_end: null
-raw_path: /home/mryan/Documents/GitHub/AA-SI_KMeans/examples/HB1603_L1-D20160707-T190150.raw
+raw_path: /home/mryan/Desktop/HB1603_L1-D20160707-T190150.raw
 region_files:
 - resources/zooplankton_patch.EVR
 - resources/zooplankton_patch1.EVR

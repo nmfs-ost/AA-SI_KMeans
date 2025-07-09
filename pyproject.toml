@@ -30,4 +30,4 @@ classifiers = [
 ]
 
 [project.scripts]
-aa-kmap = "KMeans.parser2:main"
+aa-kmap = "KMeans.parser:main"

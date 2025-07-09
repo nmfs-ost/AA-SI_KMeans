@@ -8,6 +8,8 @@
 
 The `aa-kmap` program performs **K-Means inter-frequency clustering** on acoustic data. It accepts either a **raw data file** or a **YAML/JSON configuration file** as its first (positional) argument. Based on the input type, the program runs in one of two modes:
 
+
+
 - **Existing Configuration Mode**: Load and modify an existing YAML/JSON config.
 - **New Configuration Mode**: Generate a new config from raw input data.
 
@@ -114,7 +116,7 @@ KMeans Inter-Frequency Clustering for Acoustic Data.
 
 | Argument     | Description                                                   |
 |--------------|---------------------------------------------------------------|
-| `input_path` | Path to either a raw data file (`.raw`, `.nc`) or a config file (`.yaml`, `.json`). |
+| `input_path` | Path to either a raw data file (`.raw`, `.nc`) or a config file (`.yaml`). Depending on the type passed will control which mode is used. Whaen a rw is passed, a default export is generated with a new yaml for later recall. |
 
 ---
 
@@ -123,10 +125,6 @@ KMeans Inter-Frequency Clustering for Acoustic Data.
 | Argument                     | Description |
 |-----------------------------|-------------|
 | `-h`, `--help`              | Show help message and exit. |
-| `--raw_path`                | Path to the input raw data file. |
-| `--nc_path`                 | Path to NetCDF or processed data file. |
-| `--yaml_path`               | Path to save or load the YAML configuration. |
-| `--json_path`               | Path to save or load the JSON configuration. |
 | `--region_files`            | List of `.EVR` region files to include. |
 | `--line_files`              | List of `.EVL` line files to include. |
 
@@ -172,7 +170,7 @@ KMeans Inter-Frequency Clustering for Acoustic Data.
 
 ---
 
-### 🧭 Ping & Range Selection
+### 🧭 Ping & Range Selection (It is greatly preffered that .EVL and .EVR files are provided)
 
 | Argument              | Description |
 |-----------------------|-------------|
@@ -183,7 +181,7 @@ KMeans Inter-Frequency Clustering for Acoustic Data.
 
 ---
 
-### 📉 Data Reduction Options
+### 📉 Data Reduction / Mean Back Scattering Options
 
 | Argument                 | Description |
 |--------------------------|-------------|

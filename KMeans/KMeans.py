@@ -441,14 +441,12 @@ class KMClusterMap:
             #Sv_masked = ep.clean.mask_impulse_noise(Sv_denoised)
             #Sv_masked = ep.clean.mask_transient_noise(Sv_masked)
             #Sv_input = Sv_masked
-            self.Sv_clean = Sv_input
+            self.Sv_clean = Sv_denoised
 
         # Step 2: MVBS computation (physical units)
         if self.range_meter_bin is not None and self.ping_time_bin is not None:
             self.MVBS_physical_unit_type_reduction = ep.commongrid.compute_MVBS(
-                Sv_input,
-                range_meter_bin=self.range_meter_bin,
-                ping_time_bin=self.ping_time_bin
+                Sv_input
             )
 
         # Step 3: MVBS computation (index binning)
