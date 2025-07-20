@@ -1,0 +1,17 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python Debugger: Current File with Arguments",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "args": [
+                "/home/mryan/Desktop/HB1603_L1-D20160707-T190150.raw",
+                "--sonar_model",
+                "EK60"
+            ]
+        }
+    ]
+}

@@ -5,7 +5,7 @@ import sys
 import yaml  # For loading YAML config files
 import json  # For loading JSON config files
 from pathlib import Path  # For working with file system paths
-from KMeans.KMeans import KMClusterMap  # Importing the clustering function/class (assuming it's defined in echoml)
+from KMeans import KMClusterMap  # Importing the clustering function/class from KMeans/__init__.py or KMeans/KMeans.py
 from loguru import logger # For logging (optional, can be used for debugging)
 from echopype import __version__ as echopype_version  # Importing echopype version
 from matplotlib import __version__ as matplotlib_version  # Importing matplotlib version
@@ -68,11 +68,6 @@ def save_yaml(data, output_path):
     print(f"Updated YAML saved to: {output_path}")
 
 
-
-import argparse
-
-import argparse
-
 def parse_args():
     parser = argparse.ArgumentParser(
         description="KMeans Inter-Frequency Clustering for Acoustic Data",
@@ -86,7 +81,11 @@ def parse_args():
     parser.add_argument("input_path", help="(str) Path to .raw/.nc file or config.yaml/config.json\n"
                                            "  e.g., /data/input.raw")
 
+
+
     # Optional paths
+    parser.add_argument("--sonar_model", help="(str) Echosounder type (e.g., EK60, EK80, EM2040)\n"
+                                           "  e.g., EK60")
     parser.add_argument("--raw_path", help="(str) Override .raw path\n  e.g., --raw_path /data/file.raw")
     parser.add_argument("--nc_path", help="(str) Override .nc path\n  e.g., --nc_path /data/file.nc")
     parser.add_argument("--yaml_path", help="(str) Load config from YAML\n  e.g., --yaml_path config.yaml")
@@ -112,9 +111,9 @@ def parse_args():
                         help="(list of str) Frequencies to include\n  e.g., --frequency_list 38 120")
 
     # Visualization and preprocessing
-    parser.add_argument("--pre_clustering_model", help="(str) Pre-model to apply\n  e.g., --pre_clustering_model PCA")
+    parser.add_argument("--precluster_model", help="(str) Pre-model to apply\n  e.g., --precluster_model PCA")
     parser.add_argument("--color_map", help="(str) Matplotlib colormap\n  e.g., --color_map viridis")
-    parser.add_argument("--plot_clustermaps", action="store_false", default=True,
+    parser.add_argument("--plot_clustergrams", action="store_false", default=True,
                         help="(bool) Plot cluster maps (default: True; set this flag to disable)")
     parser.add_argument("--plot_echograms", action="store_false", default=True,
                         help="(bool) Plot echograms (default: True; set this flag to disable)")
@@ -170,80 +169,35 @@ def main():
         logger.debug(f"Loaded config from {input_path}")
         
         yaml_path = str(input_path) if input_path.suffix in ['.yaml', '.yml'] else None
-        
+        config["yaml_path"] = yaml_path  # Set yaml_path in config
+    
     elif input_path.suffix in ['.raw', '.nc']:
-        yaml_path = "PREPARING_PATH"
-    # If the input is a .raw or .nc file, set the appropriate path variable
+
+        # If the input is a .raw or .nc file, set the appropriate path variable
+
+        logger.debug(f"Creating minimal yaml config for input file: {input_path}")
+        # Create a minimal config if a data file is provided directly
+        yaml_file = Path(__file__).parent / "default_config.yaml" #TODO derive names from raw minus extension.
+        with open(yaml_file, "r") as f:
+            config = yaml.safe_load(f)
+        
         if input_path.suffix == '.nc':
             nc_path = str(input_path)
             raw_path = None
+            config["input_path"] = nc_path
+            config["nc_path"] = nc_path  # Set nc_path in config
+            c
         else:
             raw_path = str(input_path)
             nc_path = None
-        logger.debug(f"Creating minimal config for input file: {input_path}")
-        # Create a minimal config if a data file is provided directly
-        config = {
-            "color_map": "jet",
-            "echopype_version": echopype_version,
-            "filename": "<name><runkmeans><n_clusters><init><max_iter><n_init><random_state><frequency_list><pre_clustering_model><plot_clustermaps><plot_echograms><remove_noise><ping_time_begin><ping_time_end><range_sample_begin><range_sample_end><data_reduction_type><ping_num><ping_time_bin><range_meter_bin><range_sample_num>",
-            "frequency_list": [
-                "38kHz",
-                "70kHz",
-                "120kHz",
-                "18kHz",
-                "200kHz"
-            ],
-            "init": "k-means++",
-            "input_path": str(input_path),
-            "line_files": [
-            ],
-            "matplotlib_version": matplotlib_version,
-            "max_iter": 10,
-            "mvbs_data_reduction_type": "sample_number",
-            "mvbs_ping_num": 1,
-            "mvbs_ping_time_bin": "2S",
-            "mvbs_range_meter_bin": 2,
-            "mvbs_range_sample_num": 1,
-            "n_clusters": 8,
-            "n_init": 10,
-            "nc_path": nc_path,
-            "numpy_version": numpy_version,
-            "pandas_version": pandas_version,
-            "ping_time_begin": None,
-            "ping_time_end": None,
-            "plot_clustermaps": True,
-            "plot_echograms": True,
-            "pre_clustering_model": "DIRECT",
-            "python_version": "3.8.10",
-            "random_state": 42,
-            "range_sample_begin": None,
-            "range_sample_end": None,
-            "raw_path": raw_path,
-            "region_files": [
-            ],
-            "remove_noise": False,
-            "run_kmeans": True,
-            "save_path": str(Path.home()),
-            "scikit_learn_version": scikit_learn_version,
-            "scipy_version": scipy_version,
-            "xarray_version": xarray_version,
-            "yaml_path": yaml_path,
-        }
+            config["input_path"] = raw_path
+            config["raw_path"] = raw_path  # Set raw_path in config
         
-        
+        config["yaml_path"] = yaml_file
+
     else:
         print("Unsupported file type for input_path.")
         sys.exit(1)
-
-    # Ensure config reflects the input path for config files
-    if input_path.suffix in [".yaml", ".yml"]:
-        config["yaml_path"] = str(input_path)
-        args.yaml_path = str(input_path)  # Set args.yaml_path for consistency
-        logger.debug(f"Config file path set to: {config['yaml_path']}")
-    if input_path.suffix == ".json":
-        config["json_path"] = str(input_path)
-        args.json_path = str(input_path)  # Set args.json_path for consistency
-        logger.debug(f"Config file path set to: {config['json_path']}")
         
     
 
@@ -254,50 +208,20 @@ def main():
     #    save_path = args.yaml_path or args.json_path
     
     config = override_config_with_args(config, args)
+
     save_config(config, config["save_path"])
 
         # Step 3: Override config
     
     logger.debug(f"Saved updated config to {config['save_path']}")
-
-    print(json.dumps(config, indent=2))
+    # Log the config for debugging
+    logger.info("Configuration post-overrides:")
+    logger.info(config)
     
     # Run the clustering if specified by flag or config
     if args.run_kmeans or config.get("run_kmeans", True):
         print("Running KMeans clustering with the following configuration:")
-        KMClusterMap(
-            # Path Configuration
-            file_path = config.get('input_path'),
-            save_path = config.get('save_path'),
-
-            # KMeans Configuration
-            frequency_list = config.get('frequency_list'),
-            cluster_count = config.get('n_clusters'),
-            random_state = config.get('random_state'),
-
-            # Pre-Clustering Model
-            model = config.get('model', config.get('pre_clustering_model', 'DIRECT')),
-
-            # Plotting
-            color_map = config.get('color_map', 'viridis'),
-            plot_echograms = config.get('plot_echograms', True),
-
-            # MVBS & Data Reduction
-            data_reduction_type = config.get('data_reduction_type', config.get('mvbs_data_reduction_type')),
-            range_meter_bin = config.get('range_meter_bin', config.get('mvbs_range_meter_bin')),
-            ping_time_bin = config.get('ping_time_bin', config.get('mvbs_ping_time_bin')),
-            range_sample_num = config.get('range_sample_num', config.get('mvbs_range_sample_num')),
-            ping_num = config.get('ping_num', config.get('mvbs_ping_num')),
-
-            # Noise Removal
-            remove_noise = config.get('remove_noise', False),
-
-            # Subset Selection
-            ping_time_begin = config.get('ping_time_begin'),
-            ping_time_end = config.get('ping_time_end'),
-            range_sample_begin = config.get('range_sample_begin'),
-            range_sample_end = config.get('range_sample_end'),
-        )
+        KMClusterMap(config["yaml_path"])
 
 # Standard Python entry point
 if __name__ == "__main__":

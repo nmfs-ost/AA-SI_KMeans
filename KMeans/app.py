@@ -235,7 +235,7 @@ class KMeansOperator: # Reference: https://medium.datadriveninvestor.com/unsuper
         
             #print(sv_frequency_absolute_difference_map_list)
             pre_clustering_df = pd.concat(sv_frequency_absolute_difference_map_list, axis = 1) # Version 1 
-            print(pre_clustering_df)
+            #print(pre_clustering_df)
         
         return pre_clustering_df.reset_index().select_dtypes(include=['float64'])
 
@@ -244,21 +244,22 @@ class KMeansOperator: # Reference: https://medium.datadriveninvestor.com/unsuper
         """_summary_
         """        
         self.pre_clustering_df = self.construct_pre_clustering_df() # Construct dataframe which is to be fed into the kmeans clustering algorithm. In this each column is a frequency.
-        
+        print("Pre-clustering DataFrame:")
         print(self.pre_clustering_df)
         
         df_normalized = preprocessing.scale(self.pre_clustering_df) # Normalize dataset such that values are from 0 to 1.
-        
-        #print(df_normalized)
+        print("Normalized DataFrame:")
+        print(df_normalized)
         
         self.df_clustered = pd.DataFrame(df_normalized) # Make into a dataframe.
         kmeans = KMeans(n_clusters=self.k, random_state = self.random_state, init='k-means++', n_init=10, max_iter=300)  # Kmeans configuration object.
         
+        
         X = self.df_clustered.values # 'X' is the sklearn convention. 
         
         clustered_records = kmeans.fit_predict(X) # The clustering data in df format.
-
-        #print(clustered_records)
+        print("Clustered Records:")
+        print(clustered_records)
 
         self.Sv_df = self.Sv.Sv[0].to_dataframe(name=None, dim_order=None) # We only need to borrow the dimensionality of the xarray so we only need one element of self.Sv.Sv.
         self.Sv_df[self.frequency_set_string] = clustered_records + 1 # So adding one will keep cluster group numbers non-zero.
@@ -269,9 +270,9 @@ class KMeansOperator: # Reference: https://medium.datadriveninvestor.com/unsuper
         
         
         for i in range(len(self.Sv.Sv)): # For each frequency, map an euqal clustering set to satisfy dimensionality constraints. This is nuanced but nessecary to make the DataArray meaningful and sensable.
-            #TODO: I know this looks strange but it is not trust me.
+            #TODO: I know this looks strange but it is not trust me bro.
             km_cluster_maps.append(self.clustering_data[self.frequency_set_string].values) # Multiply this entry for each channel becasue it needs to be mapped meaningfully to match the dimensionality of range_sample and ping_time.
-        
+        print("KMeans Cluster Maps:")
         print(km_cluster_maps)
         self.Sv["km_cluster_map"+self.frequency_set_string] = xr.DataArray(
             data = km_cluster_maps, dims = ['channel','ping_time','range_sample'], # Clustering data is appended with respect to ping_time and range_sample.

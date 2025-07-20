@@ -10,6 +10,8 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
+import hvplot.pandas  # enables df.hvplot()
+
 # Machine Learning tools.
 
 from sklearn.cluster import KMeans
@@ -19,7 +21,6 @@ from itertools import chain, combinations
 # Echosounder tools.
 
 import echopype as ep
-from echopype import open_raw
 import echoregions as er
 
 # Plotting tools.
@@ -30,6 +31,7 @@ import itertools
 # Logging tools.
 
 from loguru import logger
+import yaml
 
 pd.set_option('display.max_columns', None)  
 pd.set_option('display.expand_frame_repr', False)
@@ -134,7 +136,7 @@ class FrequencyData():
 
 class KMeansOperator: # Reference: https://medium.datadriveninvestor.com/unsupervised-learning-with-python-k-means-and-hierarchical-clustering-f36ceeec919c
     
-    def __init__(self, Sv, channel_list = None, k = None, random_state = None, n_init = 10, max_iter = 300, frequency_list = None, model = "DIRECT"): # TODO Need to take in channel list instead of query matrix.
+    def __init__(self, Sv, channel_list = None, k = None, random_state = None, n_init = 10, max_iter = 300, frequency_list = None, precluster_model = "DIRECT"): # TODO Need to take in channel list instead of query matrix.
         """_summary_
 
         Args:
@@ -152,28 +154,26 @@ class KMeansOperator: # Reference: https://medium.datadriveninvestor.com/unsuper
         self.simple_frequency_list = frequency_list
         self.k = k # KMeans configuration variable. The cluster count.
         self.random_state = random_state # Class variable 'random_state' is a general kmeans parameter.
-        self.model = model # KMeans configuration variable. Pre-clustering DF model. Constructed from Sv.Sv and dictates which dataframe is fed into the KMeans clustering operation.
+        self.precluster_model = precluster_model # KMeans configuration variable. Pre-clustering DF model. Constructed from Sv.Sv and dictates which dataframe is fed into the KMeans clustering operation.
         self.n_init = n_init # KMeans configuration variable. 
         self.max_iter = max_iter # KMeans configuration variable. Max iterations.
         
-        if self.frequency_list == None: # If a frequency_list wasn't passed.
-            
-            if self.channel_list != None: # If a channel_list wasn't passed.
-                            
+        # If no frequency_list is provided, check if a channel_list is provided
+        if self.frequency_list is None:
+            if self.channel_list is not None:
+                # If channel_list is provided, construct frequency_list from it
                 self.frequency_list = []
-                self.construct_frequency_list(frequencies_provided = False)
+                self.construct_frequency_list(frequencies_provided=False)
                 self.construct_frequency_set_string()
-                self.assign_sv_clusters() # Execute K-Means algorithm.
-                
-            else: 
-                
-                print("Provide a frequency_list or channel_list input parameter.")
-
-        else:   
-             
-            self.construct_frequency_list(frequencies_provided = True)
+                self.assign_sv_clusters()
+            else:
+                # If neither frequency_list nor channel_list is provided, raise an error
+                raise ValueError("Provide a frequency_list or channel_list input parameter.")
+        else:
+            # If frequency_list is provided, use it to construct the internal frequency_list
+            self.construct_frequency_list(frequencies_provided=True)
             self.construct_frequency_set_string()
-            self.assign_sv_clusters() # Execute K-Means algorithm.
+            self.assign_sv_clusters()
 
         
     def construct_frequency_list(self, frequencies_provided):
@@ -218,7 +218,7 @@ class KMeansOperator: # Reference: https://medium.datadriveninvestor.com/unsuper
         
         self.frequency_pair_combination_list = list(itertools.combinations(self.frequency_list, 2))
         
-        if self.model == "DIRECT": # The DIRECT clustering model clusters direct Sv.Sv values. 
+        if self.precluster_model == "DIRECT": # The DIRECT clustering model clusters direct Sv.Sv values. 
  
  
             for i in self.frequency_list: # Need a channel mapping function.
@@ -228,197 +228,427 @@ class KMeansOperator: # Reference: https://medium.datadriveninvestor.com/unsuper
                 
             pre_clustering_df = pd.concat(sv_frequency_map_list, axis = 1) # Creats a new dataframe from the values previously constructed. This is done to keep it steril.
         
-        if self.model == "ABSOLUTE_DIFFERENCES": # The ABSOLUTE_DIFFERENCES clustering model clusters the absolute value of the differences between a pair permutation of frequency based Sv.Sv values. 
+        if self.precluster_model == "ABSOLUTE_DIFFERENCES": # The ABSOLUTE_DIFFERENCES clustering model clusters the absolute value of the differences between a pair permutation of frequency based Sv.Sv values. 
             # Each pair permutation is given it's own column within the dataframe that is fed into KMeans in the same way that with DIRECT each frequency is given it's own column within the dateframe that is fed into KMeans.
             # In other words this model was built to solve the problems of DIRECT by not allowing identical frequencies to be clustered together meaningfully becasue there should no no new information produced by that. 
             # If you attempt to feed the same frequencies in you will get a blank screen. This mean that 100% of the visual information is meaningful.
         
             for i in self.frequency_pair_combination_list:
-                                
+                # For each pair of frequencies, compute the absolute difference of their Sv values.
+                # 1. Get the Sv values for each channel in the pair, convert to DataFrame, and extract the "Sv" column.
+                # 2. Subtract the two Sv arrays, take the absolute value.
+                # 3. Build a column name describing the operation, e.g., "abs(Sv(38kHz)-Sv(120kHz))".
+                # 4. Create a DataFrame with this column, and append it to the list for later concatenation.
                 sv_frequency_absolute_difference_df = (self.Sv.Sv[i[0][0]].to_dataframe(name=None, dim_order=None)["Sv"] - self.Sv.Sv[i[1][0]].to_dataframe(name=None, dim_order=None)["Sv"]).abs().values
-                #print(sv_frequency_absolute_difference_df)
+                #index_name is a string like "abs(Sv(38kHz)-Sv(120kHz))" It is a label for the column in the pre-clustering dataframe.
                 index_name = "abs(Sv("+str(self.Sv.Sv[i[0][0]].coords.get("channel")).split("kHz")[0].split("GPT")[1].strip()+"kHz" +")-Sv("+ str(self.Sv.Sv[i[1][0]].coords.get("channel")).split("kHz")[0].split("GPT")[1].strip()+"kHz))"
                 x = pd.DataFrame(data = sv_frequency_absolute_difference_df, columns = [index_name])
                 sv_frequency_absolute_difference_map_list.append(x[index_name])
         
-        
-            #print(sv_frequency_absolute_difference_map_list)
+            print(sv_frequency_absolute_difference_map_list)
             pre_clustering_df = pd.concat(sv_frequency_absolute_difference_map_list, axis = 1) # Version 1 
             
         return pre_clustering_df.reset_index().select_dtypes(include=['float64']) # Returns pre-clustering dataframe.
 
 
     def assign_sv_clusters(self):
-        """_summary_
-        """        
-        self.pre_clustering_df = self.construct_pre_clustering_df() # Construct dataframe which is to be fed into the kmeans clustering algorithm. In this each column is a frequency.
-        logger.info(self.model + " Preclustering Dataframe :")
-        print("")                                   # Logging message.
-        print(self.pre_clustering_df)               # Logging message.
-        logger.info("Normalizing")                  # Logging message.
-        df_normalized = preprocessing.scale(self.pre_clustering_df) # Normalize dataset such that values are from 0 to 1.
-        logger.info("Normalized dataframe : ")      # Logging message.
-        print("")                                   # Logging message.
-        print(df_normalized)                        # Logging message.
-        
-        self.df_clustered = pd.DataFrame(df_normalized) # Make into a dataframe.
-        logger.info("Calculating KMeans")
-        kmeans = KMeans(n_clusters=self.k, random_state = self.random_state, init='k-means++', n_init=10, max_iter=300)  # Kmeans configuration object.
-        X = self.df_clustered.values # 'X' is the sklearn convention. 
-        clustered_records = kmeans.fit_predict(X) # The clustering data in df format.
-        self.Sv_df = self.Sv.Sv[0].to_dataframe(name=None, dim_order=None) # We only need to borrow the dimensionality of the xarray so we only need one element of self.Sv.Sv.
-        self.Sv_df[self.frequency_set_string] = clustered_records + 1 # So adding one will keep cluster group numbers non-zero.
-        
-        self.clustering_data = self.Sv_df.to_xarray() # Since the dimensionality is correct at this point we can safely convert this df into an xarray and we can make modifications later.
-        km_cluster_maps = [] # An array which helps prepare the dataArray dimensionality. It will store copies of clustering data. The redundancy may seem unfortune but it is infact nessecary due to the nature of how the cluster map was created. 
-        
-        for i in range(len(self.Sv.Sv)): # For each frequency, map an euqal clustering set to satisfy dimensionality constraints. This is nuanced but nessecary to make the DataArray meaningful and sensable.
-            #TODO: I know this looks strange but it is not trust me.
-            km_cluster_maps.append(self.clustering_data[self.frequency_set_string].values) # Multiply this entry for each channel becasue it needs to be mapped meaningfully to match the dimensionality of range_sample and ping_time.
-        
-        self.Sv["km_cluster_map"+self.frequency_set_string] = xr.DataArray(
-            data = km_cluster_maps, dims = ['channel','ping_time','range_sample'], # Clustering data is appended with respect to ping_time and range_sample.
-            attrs = dict( # Atrrributes as a dictionary.
-                description = "The kmeans cluster group number.", # Assigns a description attribute to the DataArrray.
-                units = "Unitless", # Assigns a physical unit attribute to the DataArray.
-                clusters = self.k, # Assigns a cluster count variable 'k' attribute to the DataArray.
-                km_frequencies = self.frequency_set_string, # Assigns a frequency set utilized for kmeans clustering attribute to the DataArray.
-                random_state = self.random_state, # Assigns a random state attribute to the DataArray.
-            ))
+        """
+        Performs KMeans clustering on the pre-processed Sv data and assigns cluster labels to the Sv xarray object.
+
+        This method:
+        - Constructs the pre-clustering DataFrame (features for clustering).
+        - Normalizes the features (zero mean, unit variance).
+        - Runs KMeans clustering.
+        - Maps the resulting cluster labels back to the original Sv data structure.
+        - Stores the cluster map as a new DataArray in self.Sv.
+
+        Example:
+            >>> kmeans_op = KMeansOperator(Sv, frequency_list=["38 kHz", "120 kHz"], k=3)
+            >>> kmeans_op.assign_sv_clusters()
+            # Now kmeans_op.Sv contains a new DataArray with cluster assignments.
+
+        Returns:
+            None. Modifies self.Sv in-place by adding a new DataArray with cluster assignments.
+        """
+        # Step 1: Construct the dataframe to be fed into KMeans clustering.
+        self.pre_clustering_df = self.construct_pre_clustering_df()  # Each column is a frequency or feature.
+        logger.info(f"{self.precluster_model} Preclustering DataFrame:")
+        print(self.pre_clustering_df)
+
+        # Step 2: Normalize the dataframe so each feature has mean 0 and variance 1.
+        logger.info("Normalizing the preclustering dataframe.")
+        df_normalized = preprocessing.scale(self.pre_clustering_df)
+        logger.info("Normalized dataframe:")
+        print(df_normalized)
+
+        # Step 3: Convert normalized data to DataFrame for compatibility.
+        self.df_clustered = pd.DataFrame(df_normalized)
+
+        # Step 4: Run KMeans clustering.
+        logger.info("Calculating KMeans clustering.")
+        kmeans = KMeans(
+            n_clusters=self.k,
+            random_state=self.random_state,
+            init='k-means++',
+            n_init=self.n_init,
+            max_iter=self.max_iter
+        )
+        X = self.df_clustered.values  # Feature matrix for sklearn
+        clustered_records = kmeans.fit_predict(X)  # Cluster labels for each record
+
+        # Step 5: Map cluster labels back to the original Sv DataFrame.
+        # Use the first channel's DataFrame to get the correct index structure.
+        self.Sv_df = self.Sv.Sv[0].to_dataframe(name=None, dim_order=None)
+        # Add cluster labels as a new column (add 1 to avoid zero-based cluster numbers).
+        self.Sv_df[self.frequency_set_string] = clustered_records + 1
+
+        # Step 6: Convert the DataFrame with cluster labels back to xarray.
+        self.clustering_data = self.Sv_df.to_xarray()
+
+        # Step 7: Prepare the cluster map for all channels (to match Sv dimensionality).
+        km_cluster_maps = []
+        for i in range(len(self.Sv.Sv)):
+            # Repeat the cluster assignments for each channel to match dimensions.
+            km_cluster_maps.append(self.clustering_data[self.frequency_set_string].values)
+
+        # Step 8: Add the cluster map as a new DataArray to self.Sv.
+        self.Sv["km_cluster_map" + self.frequency_set_string] = xr.DataArray(
+            data=km_cluster_maps,
+            dims=['channel', 'ping_time', 'range_sample'],
+            attrs=dict(
+                description="The kmeans cluster group number.",
+                units="Unitless",
+                clusters=self.k,
+                km_frequencies=self.frequency_set_string,
+                random_state=self.random_state,
+            )
+        )
+
     
 
 class KMClusterMap:
     """_summary_
     """
-    def __init__(self, file_path, save_path, frequency_list, cluster_count, random_state = None, model = "DIRECT", color_map = "viridis", plot = True, plot_echograms = True, data_reduction_type = None, range_meter_bin = None, ping_time_bin = None, range_sample_num = None, ping_num = None, remove_noise = True, ping_time_begin = None, ping_time_end = None, range_sample_begin = None, range_sample_end = None ):
-        """_summary_
-
-        Args:
-            file_path (_type_): _description_
-            save_path (_type_): _description_
-            frequency_list (_type_): _description_
-            cluster_count (_type_): _description_
-            random_state (_type_, optional): _description_. Defaults to None.
-            model (str, optional): _description_. Defaults to "DIRECT".
-            color_map (str, optional): _description_. Defaults to "viridis".
-            plot (bool, optional): _description_. Defaults to True.
-            plot_echograms (bool, optional): _description_. Defaults to True.
-            data_reduction_type (_type_, optional): _description_. Defaults to None.
-            range_meter_bin (_type_, optional): _description_. Defaults to None.
-            ping_time_bin (_type_, optional): _description_. Defaults to None.
-            range_sample_num (_type_, optional): _description_. Defaults to None.
-            ping_num (_type_, optional): _description_. Defaults to None.
-            remove_noise (bool, optional): _description_. Defaults to True.
-            ping_time_begin (_type_, optional): _description_. Defaults to None.
-            ping_time_end (_type_, optional): _description_. Defaults to None.
-            range_sample_begin (_type_, optional): _description_. Defaults to None.
-            range_sample_end (_type_, optional): _description_. Defaults to None.
+    def __init__(self, config_path):
+        
+        self.config_path = config_path # Path to the configuration file.
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+            
+        
+        # Assign all config values to attributes
+        for key, value in config.items():
+            setattr(self, key, value)
+        
+            
+        self.file_name = self.input_path.split("."+self.input_path.split(".")[-1])[0].replace(".","").split("/")[-1]
+        self.frequency_list_string = self.construct_frequency_list_string()
+        self.construct_kmeans_clustergram() # This is the function which constructs the kmeans clustergram. It is called at the end of the run() function.
+        
+        
+            
+    def construct_kmeans_clustergram(self):
+        """Once this class object is instantiated, a run function is employed to perform some required initialization sequences so that all class object variables can be constructed. 
+        Another way to think about it is that run() handles the top level abstraction of KMeanClusterMap() managment and Sv prep for KMeans clustering analysis. 
+        This involves converting, cropping, dropping Nans, computing MVBSusing physical units or sample number, 
+        removing noise and applying .EVL or .EVR files.
         """        
         
-        
-        self.file_path = file_path
-        print(self.file_path)
-        print(self.file_path.split("."+self.file_path.split(".")[-1])[0].replace(".",""))
-        self.file_name = self.file_path.split("."+self.file_path.split(".")[-1])[0].replace(".","").split("/")[-1]
-        print(self.file_name)
-        self.random_state = random_state
-        self.color_map = color_map
-        self.save_path = save_path
-        self.cluster_count = cluster_count
-        self.frequency_list = frequency_list
-        self.model = model
-        self.plot = plot
-        
-        self.range_meter_bin = range_meter_bin
-        self.ping_time_bin = ping_time_bin
-        
-        self.range_sample_num = range_sample_num
-        self.ping_num = ping_num
-        
-        self.remove_noise = remove_noise
-        
-        self.plot_echograms = plot_echograms
-        
-        self.ping_time_begin = ping_time_begin
-        self.ping_time_end = ping_time_end
-        self.range_sample_begin = range_sample_begin
-        self.range_sample_end = range_sample_end
-
-        self.data_reduction_type = data_reduction_type
-
-        self.frequency_list_string = self.construct_frequency_list_string()
-        self.run() 
-        
+        if (self.input_path is None or self.input_path.split(".")[-1].lower() not in {"nc", "raw", "yaml", "yml"}):
             
-            
-            
-            
-    def run(self):
-        
-        save_directory = self.save_path # Class object copies save directory string path and keeps as a class object variable for convenience.
-        
-        if not os.path.exists(save_directory): # If directory does not exist.
-            
-            os.makedirs(save_directory)
-        
-        
-        if self.file_path.split(".")[-1] == "raw":
-            print("OK!!!!!!!!")
-            raw_file = self.file_path
-            
-            ed = ep.open_raw(raw_file = raw_file, sonar_model='EK60')  
-            ed.to_netcdf(save_path=save_directory)
-            self.Sv = ep.calibrate.compute_Sv(ed).dropna(dim="range_sample", how="any").isel(range_sample=slice(self.range_sample_begin, self.range_sample_end), ping_time=slice(self.ping_time_begin, self.ping_time_end)) # Pulls a cleaner version of Sv without NaNs.
-            
-        if self.file_path.split(".")[-1] == "nc": # If a .nc file is provided by user.
-            
-            
-            
-            nc_file = self.file_path # .nc filepath or location.
-            ed = ep.open_converted(nc_file) # Principle echopype conversion function. This provides echodata object.
-            self.Sv = ep.calibrate.compute_Sv(ed).dropna(dim="range_sample", how="any").isel(range_sample=slice(self.range_sample_begin, self.range_sample_end), ping_time=slice(self.ping_time_begin, self.ping_time_end)) # Pulls a cleaner version of Sv without NaNs.
-            
-            
-        if self.Sv is None:
-            
-            print("provide .raw or .nc file")
+            logger.error("Provide valid .raw, .nc, or .yaml/.yml file")
+                                                      
             
         else:
-
-            self.preprocess()
-            
-            # Plot kmeans cluster map
-            if self.data_reduction_type == "sample_number":
-                
-                self.kmeans_operation = KMeansOperator(Sv = self.MVBS_sample_number_type_reduction, frequency_list = self.frequency_list, k = self.cluster_count, random_state = self.random_state, model = self.model) 
-
-            
-            if self.data_reduction_type == "physical_units":
-                
-                self.kmeans_operation = KMeansOperator(Sv = self.MVBS_physical_unit_type_reduction, frequency_list = self.frequency_list, k = self.cluster_count, random_state = self.random_state, model = self.model) 
-
-
-            if self.data_reduction_type == None and self.remove_noise == True:
-                
-                self.kmeans_operation = KMeansOperator(Sv = self.Sv_clean, frequency_list = self.frequency_list, k = self.cluster_count, random_state = self.random_state, model = self.model) 
-
-            if self.data_reduction_type == None and self.remove_noise == False:
-                
-                self.kmeans_operation = KMeansOperator(Sv = self.Sv, frequency_list = self.frequency_list, k = self.cluster_count, random_state = self.random_state, model = self.model) 
-                
-            self.frequency_list = self.kmeans_operation.frequency_list # Makes a copy of the constructed frequency list data for this class since we need it for plotting.
-
-
-            if self.plot == True or self.save_path == None:
-                
-                self.plot_cluster_map(self.kmeans_operation.Sv)
             
             
-            if self.save_path != None:
+            if not os.path.exists(self.save_path): # If directory does not exist.
                 
-                self.full_save(self.kmeans_operation.Sv)
+                os.makedirs(self.save_path)
             
+
+            self.Sv = self.compute_Sv()    
+
+            self.Sv = self.RROI(self.Sv, self.ping_time_begin, self.ping_time_end, self.range_sample_begin, self.range_sample_end )
+
+            self.Sv = self.drop_nans(self.Sv)
+
+            if self.remove_noise == True:
+
+                self.Sv = self.noise_reduction(self.Sv)
+
+            self.Sv = self.configure_MVBS(self.Sv)                   # Process routine. This deals with MVBS parametrization.
+
+            #if self.line_files != None:
+                
+                #self.Sv = self.__process_line_files(self.line_files)
+                
+            if self.region_files != None:
+                
+                self.Sv = self.__process_region_files(self.region_files)
+
+            logger.info('Preparing KMeans clustering operation') # Logging message.
+            self.kmeans_operation = KMeansOperator( Sv = self.Sv,  frequency_list = self.frequency_list, k = self.n_clusters, random_state = self.random_state, n_init = self.n_init, max_iter = self.max_iter, precluster_model = self.precluster_model) # Create a KMeansOperator object which will handle the clustering operation.)  
+            self.frequency_map = self.kmeans_operation.frequency_list # Makes a copy of the constructed frequency list data for this class since we need it for plotting.
+            logger.info('Frequency map :') # Logging message.
+            print(self.frequency_map) # Print out the frequency map.
+            
+            if self.save_path != None: # If a save path was provided.     
+                
+                logger.info('Saving cluster map and corresponding echograms...')    # Logging message.
+                self.full_save(self.kmeans_operation.Sv) # This saves the kmeans cluster map and a corresponding echogram for each involved frequency.
+            
+            if self.plot == True:
+                
+                logger.info('Plotting cluster map and corresponding echograms...')    # Logging message.    
+                plt.show()
+            
+            
+    def compute_Sv(self):
+        
+        # Check if the input file is a YAML file (either .yaml or .yml extension)
+        if self.input_path.split(".")[-1] == "yaml" or self.input_path.split(".")[-1] == "yml":
+            # Log that we are opening the YAML file for debugging purposes
+            logger.debug('Opening ' + self.input_path) # Logging message.
+
+            # Open the YAML file for reading
+            with open(self.config_path, 'r') as yaml_file:
+                # Parse the YAML file into a Python dictionary
+                yaml_data = yaml.safe_load(yaml_file)
+
+                # Try to extract 'raw_path' and 'nc_path' from the YAML dictionary
+                raw_path = yaml_data.get('raw_path')
+                nc_path = yaml_data.get('nc_path')
+
+                # Now, depending on which path is provided, process accordingly:
+                # If a raw file path is provided in the YAML
+                if raw_path:
+                    # Open the raw file using echopype, specifying the sonar model
+                    ed = ep.open_raw(raw_file=raw_path, sonar_model=self.sonar_model)
+                    # Convert the raw file to NetCDF and save it to the specified directory
+                    ed.to_netcdf(save_path=self.save_path)
+                    # Compute Sv (volume backscattering strength), drop NaNs, and crop to the specified region
+                    self.Sv = ep.calibrate.compute_Sv(ed).dropna(dim="range_sample", how="any").isel(
+                    range_sample=slice(self.range_sample_begin, self.range_sample_end),
+                    ping_time=slice(self.ping_time_begin, self.ping_time_end)
+                    )
+                    logger.info('Sv computed from raw file.') # Logging message.
+                # If a NetCDF file path is provided in the YAML
+                elif nc_path:
+                    # Open the already converted NetCDF file using echopype
+                    ed = ep.open_converted(nc_path)
+                    # Compute Sv, drop NaNs, and crop to the specified region
+                    self.Sv = ep.calibrate.compute_Sv(ed).dropna(dim="range_sample", how="any").isel(
+                    range_sample=slice(self.range_sample_begin, self.range_sample_end),
+                    ping_time=slice(self.ping_time_begin, self.ping_time_end)
+                    )
+                else:
+                    # If neither path is provided, print an error message
+                    print("YAML file must contain either 'raw_file' or 'nc_file' key.")
                     
+        # Check if the input file is a .raw file
+        if self.input_path.split(".")[-1] == "raw":
+            
+            raw_file = self.input_path  # Assign the input path to raw_file variable
+
+            # Open the raw file using echopype, specifying the sonar model as 'EK60'
+            ed = ep.open_raw(raw_file=raw_file, sonar_model='EK60')
+
+            # Convert the raw file to NetCDF format and save it to the specified directory
+            ed.to_netcdf(save_path=self.save_path)
+
+            # Compute Sv (volume backscattering strength) from the echodata object,
+            # drop any NaN values along the 'range_sample' dimension,
+            # and crop the data to the specified range_sample and ping_time slices
+            self.Sv = ep.calibrate.compute_Sv(ed).dropna(
+            dim="range_sample", how="any"
+            ).isel(
+            range_sample=slice(self.range_sample_begin, self.range_sample_end),
+            ping_time=slice(self.ping_time_begin, self.ping_time_end)
+            )
+
+        # Check if the input file is a .nc (NetCDF) file
+        if self.input_path.split(".")[-1] == "nc":
+            # Assign the input path to nc_file variable
+            nc_file = self.input_path
+
+            # Open the NetCDF file using echopype's open_converted function to get the echodata object
+            ed = ep.open_converted(nc_file)
+
+            # Compute Sv (volume backscattering strength) from the echodata object,
+            # drop any NaN values along the 'range_sample' dimension,
+            # and crop the data to the specified range_sample and ping_time slices
+            self.Sv = ep.calibrate.compute_Sv(ed).dropna(
+            dim="range_sample", how="any"
+            ).isel(
+            range_sample=slice(self.range_sample_begin, self.range_sample_end),
+            ping_time=slice(self.ping_time_begin, self.ping_time_end)
+            )
+        
+        if self.Sv is None:
+            logger.error("Sv is None. Provide a .yaml configuration, .raw, or .nc file.")
+            
+        else:
+            logger.info('Sv computed successfully.')
+            return self.Sv # Return Sv xarray object.
+            
+
+    def process_region_files(self):
+        """
+        Processes region files (EVR) to mask Sv data according to specified regions.
+
+        This method:
+        - Reads region files (EVR) using echoregions.
+        - Creates a depth coordinate for the Sv dataset.
+        - Swaps the 'range_sample' dimension with 'depth' for easier interpretation.
+        - Applies the region mask to the Sv data.
+        - Plots the mask and masked Sv for visual inspection.
+
+        Returns:
+            None. Modifies self.Sv in-place by applying the region mask.
+        """
+        if self.region_files is not None:
+            logger.info("Processing region files for masking Sv data.")
+
+            Sv = self.Sv
+
+            # --- Create a depth coordinate for the Sv dataset ---
+            # The echo_range variable gives the distance from the transducer to each sample.
+            # We assume water_level is constant across frequencies and times for simplicity.
+            # Select the first channel and first ping_time for echo_range and water_level.
+            echo_range = Sv.echo_range.isel(channel=0, ping_time=0)
+            water_level = Sv.water_level.isel(channel=0, time3=0)
+            # Compute the absolute depth by adding water_level to echo_range.
+            depth = water_level + echo_range
+            # Remove the 'channel' coordinate from depth to avoid conflicts.
+            depth = depth.drop_vars('channel')
+            # Add the computed depth as a new coordinate to the Sv dataset.
+            Sv['depth'] = depth
+            # Swap the 'range_sample' dimension for 'depth' for easier interpretation and plotting.
+            Sv = Sv.swap_dims({'range_sample': 'depth'})
+
+            logger.info("Reading EVR region file(s) and applying mask.")
+
+            # --- Read and apply the region mask from EVR file ---
+            # For now, only the first region file in the list is processed.
+            EVR_FILE = self.region_files[0]  # TODO: Extend to process all region files in the list
+            # Read the EVR file using echoregions, which parses region definitions.
+            r2d = er.read_evr(EVR_FILE)
+            logger.info(f"Region IDs found in EVR file: {r2d.data.region_id.values}")
+
+            # --- Create a mask for a specific region ID (e.g., region ID 1) ---
+            # The mask will be True (or 1) inside the region and NaN outside.
+            # Select the first channel and drop the 'channel' coordinate for compatibility.
+            mask = r2d.mask(Sv.isel(channel=0).drop('channel'), [1], mask_var="ROI")
+            logger.info(f"Mask max value: {mask.max().values}")
+
+            # --- Plot the mask for visual inspection ---
+            plt.figure()
+            mask.plot()
+            plt.title("Region Mask")
+
+            # --- Apply the mask to Sv ---
+            # Use xarray's where: values outside the mask become NaN.
+            Sv_masked = Sv.where(mask.isnull())
+
+            # --- Plot the masked Sv for the first channel ---
+            # Transpose for correct orientation and set yincrease=False to match echogram convention.
+            plt.figure()
+            Sv_masked.isel(channel=0).T.plot(yincrease=False)
+            plt.title("Masked Sv (Channel 0)")
+
+            logger.info("Region masking and plotting complete.")
+            
+    def RROI(self, Sv, ping_time_begin, ping_time_end, range_sample_begin, range_sample_end ):
+        """
+        Crops a rectangular region of interest (RROI) from the Sv xarray Dataset.
+
+        This function selects a subset of the Sv data based on the specified ping_time and range_sample indices.
+        It is useful for focusing analysis on a specific region of the echogram, reducing computational load,
+        or excluding irrelevant data.
+
+        Args:
+            Sv (xarray.Dataset): The input Sv dataset (typically with dimensions: channel, ping_time, range_sample).
+            ping_time_begin (int): The starting index for the ping_time dimension (inclusive).
+            ping_time_end (int): The ending index for the ping_time dimension (exclusive).
+            range_sample_begin (int): The starting index for the range_sample dimension (inclusive).
+            range_sample_end (int): The ending index for the range_sample dimension (exclusive).
+
+        Returns:
+            xarray.Dataset: The cropped Sv dataset containing only the specified region.
+
+        Example:
+            >>> # Suppose Sv has shape (channel=3, ping_time=1000, range_sample=500)
+            >>> km = KMClusterMap(...)
+            >>> Sv_cropped = km.RROI(Sv, ping_time_begin=100, ping_time_end=200, range_sample_begin=50, range_sample_end=150)
+            >>> print(Sv_cropped.dims)
+            # Output: {'channel': 3, 'ping_time': 100, 'range_sample': 100}
+
+        Explanation:
+            - Uses xarray's isel method to slice the ping_time and range_sample dimensions.
+            - The indices are zero-based and follow Python's slice semantics (start inclusive, end exclusive).
+            - This operation does not modify the original Sv; it returns a new cropped Dataset.
+
+        Notes:
+            - If ping_time_begin or range_sample_begin is None, slicing will start from the beginning.
+            - If ping_time_end or range_sample_end is None, slicing will go to the end.
+            - Make sure the indices are within the bounds of the Sv dimensions to avoid IndexError.
+        """
+        logger.info("Rectangular region of interest is cropped out of analysis region.")
+        Sv_RROI = Sv.isel(
+            range_sample=slice(range_sample_begin, range_sample_end),
+            ping_time=slice(ping_time_begin, ping_time_end)
+        )
+        logger.info("Region of Interests Cropped!")
+        return Sv_RROI
+    
+    def drop_nans(self, Sv):
+        """
+        Drops NaN values along the 'range_sample' dimension of the Sv xarray Dataset.
+
+        This function removes any samples (along the 'range_sample' dimension) that contain NaN values,
+        resulting in a cleaner dataset for further analysis or clustering.
+
+        Args:
+            Sv (xarray.Dataset): The input Sv dataset.
+
+        Returns:
+            xarray.Dataset: The Sv dataset with NaNs dropped along 'range_sample'.
+
+        Example:
+            >>> Sv_clean = self.drop_nans(Sv)
+        """
+        logger.info("Dropping NaN values from Sv along 'range_sample' dimension.")
+        Sv_naNs_dropped = Sv.dropna(dim="range_sample", how="any")
+        logger.info(f"NaN values dropped. Resulting shape: {Sv_naNs_dropped.sizes}")
+        return Sv_naNs_dropped
+    
+    def noise_reduction(self, Sv):
+                    
+        logger.info('Removing noise from Sv...')                            # Logging message.
+        logger.info('   range_sample = ' + str(self.range_sample_num))      # Logging message.
+        logger.info('   ping_num = ' + str(self.ping_num))                  # Logging message.
+        logger.info("Noise Removed!")
+        # Use echopype's clean module to remove noise from Sv.
+
+        return ep.clean.remove_background_noise(Sv, range_sample_num=self.range_sample_num, ping_num=self.ping_num)  
+      
+    def configure_MVBS(self, Sv):
+        """Configure MVBS using provided class variables. This internal method should not be directly employed by user.
+        """
+        if self.range_meter_bin != None and self.ping_time_bin != None:
+            logger.info('Calculating MVBS using reduction by physical units.')  # Logging message.
+            logger.info('   range_meter_bin = ' + str(self.range_meter_bin))    # Logging message.
+            logger.info('   ping_time_bin = ' + str(self.ping_time_bin))        # Logging message.
+            self.Sv = ep.commongrid.compute_MVBS(Sv, range_bin = self.range_bin, ping_time_bin = self.ping_time_bin )
+                
+        if self.ping_num != None and self.range_sample_num != None:
+            logger.info('Calculating MVBS using reduction by sample number.')
+            logger.info('   range_sample_num = ' + str(self.range_sample_num))
+            logger.info('   ping_num = ' + str(self.ping_num))
+            self.Sv = ep.commongrid.compute_MVBS_index_binning( Sv, range_sample_num=self.range_sample_num, ping_num=self.ping_num )
+                
+        return Sv      
         
     def preprocess(self):
         """
@@ -460,143 +690,127 @@ class KMClusterMap:
                     
             
     
-    def plot_cluster_map(self, Sv):
-        
-        
-        cmap = plt.get_cmap(self.color_map, self.cluster_count)
-        Sv["km_cluster_map"+self.kmeans_operation.frequency_set_string][0].transpose("range_sample","ping_time").plot(cmap=cmap)   
-        #self.Sv["Sv"][0].transpose("range_sample","ping_time").plot() # Regular plot to which we compare with.
+    def plot_clustergram(self, Sv):
+        """
+        Plots the KMeans clustergram for the clustered Sv data.
 
-        plt.title(self.kmeans_operation.frequency_set_string+",    cluster_count = "+str(self.cluster_count)+",    random_state = "+str(self.random_state)+",    file = "+self.file_path+",    colormap = "+self.color_map)
+        Args:
+            Sv (xarray.Dataset): The dataset containing the KMeans cluster map.
+
+        This function uses matplotlib and xarray's plotting to visualize the cluster assignments
+        produced by KMeans clustering. The clustergram is shown using the specified colormap and
+        number of clusters. The y-axis is inverted to match echogram conventions.
+        """
+        # Get the colormap with the number of clusters
+        cmap = plt.get_cmap(self.color_map, self.n_clusters)
+        # Plot the first channel's cluster map, transposed for correct orientation
+        Sv["km_cluster_map"+self.kmeans_operation.frequency_set_string][0].transpose("range_sample","ping_time").plot(cmap=cmap)
+        # Optionally, you could plot the original Sv for comparison (commented out)
+        # self.Sv["Sv"][0].transpose("range_sample","ping_time").plot()
+
+        # Set the plot title with relevant clustering and file information
+        plt.title(
+            self.kmeans_operation.frequency_set_string +
+            ",    n_clusters = " + str(self.n_clusters) +
+            ",    random_state = " + str(self.random_state) +
+            ",    file = " + self.input_path +
+            ",    colormap = " + self.color_map
+        )
+        # Invert the y-axis for echogram-style display
         plt.gca().invert_yaxis()
+        # Show the plot
         plt.show()
         
     def save_echogram(self, data_array, channel):
         
 
-        cmap = plt.get_cmap(self.color_map, self.cluster_count)      
+        #cmap = plt.get_cmap(self.color_map, self.n_clusters)
+        logger.info("Saving echogram for frequency: " + self.get_frequency(channel) + ", channel: " + str(channel))      
         data_array[channel].transpose("range_sample","ping_time").plot()
-        plt.title("frequency = "+self.get_frequency(channel)+",    file = "+self.file_path+",    colormap = "+self.color_map)
-        #plt.legend(frameon=None)
+        plt.title("frequency = "+self.get_frequency(channel)+",    file = "+self.input_path+",    colormap = "+self.color_map)
         
         plt.gca().invert_yaxis()
         plt.savefig(fname = self.save_path+"/eg:"+self.file_name+"<"+self.get_frequency(channel)+">", dpi=2048)   
     
         
-    def save_cluster_map(self, Sv):
-        
-        cmap = plt.get_cmap(self.color_map, self.cluster_count) 
-        Sv["km_cluster_map"+self.kmeans_operation.frequency_set_string][0].transpose("range_sample","ping_time").plot(cmap=cmap)
-        plt.title(self.kmeans_operation.frequency_set_string+",    cluster_count = "+str(self.cluster_count)+",    random_state = "+str(self.random_state)+",    file = "+self.file_path+",    colormap = "+self.color_map)
+    def save_clustergram(self, Sv):
+
+        #cmap = plt.get_cmap(self.color_map, self.n_clusters) 
+        Sv["km_cluster_map"+self.kmeans_operation.frequency_set_string][0].transpose("range_sample","ping_time").plot()
+        plt.title(self.kmeans_operation.frequency_set_string+",    n_clusters = "+str(self.n_clusters)+",    random_state = "+str(self.random_state)+",    file = "+self.input_path+",    colormap = "+self.color_map)
         plt.gca().invert_yaxis()
-        plt.savefig(self.save_path+"/km:"+self.file_name+"<"+ self.frequency_list_string+"k="+str(self.cluster_count)+"_rs="+str(self.random_state)+"_cm="+self.color_map+"_md="+str(self.model)+"_rmb="+str(self.range_meter_bin)+">", dpi=2048)
+        plt.savefig(self.save_path+"/km:"+self.file_name+"<"+ self.frequency_list_string+"k="+str(self.n_clusters)+"_rs="+str(self.random_state)+"_cm="+self.color_map+"_md="+str(self.precluster_model)+"_rmb="+str(self.range_meter_bin)+">", dpi=2048)
 
 
     def full_save(self, Sv):
-        self.save_cluster_map(Sv)
+        self.save_clustergram(Sv)
         for frequency in self.frequency_list:
             self.save_echogram(self.Sv["Sv"],frequency[0])
 
     def construct_frequency_list_string(self):
+        """
+        Constructs a string representation of the frequency_list for labeling or file naming.
+
+        Returns:
+            str: A string with all frequency values concatenated and separated by underscores.
+
+        Example:
+            >>> self.frequency_list = [[0, "38 kHz"], [1, "120 kHz"]]
+            >>> self.construct_frequency_list_string()
+            '38 kHz_120 kHz_'
+        """
+        # Initialize an empty string to accumulate frequency names
         frequency_list_string = ""
+        # Iterate over the frequency_list, which is expected to be a list of [channel_index, frequency_string]
         for frequency in self.frequency_list:
-            frequency_list_string = frequency_list_string + frequency+"_"
-        
+            # Append the frequency string and an underscore to the result
+            frequency_list_string = frequency_list_string + frequency[1] + "_"
+        # Return the concatenated string of frequencies, separated by underscores
         return frequency_list_string
 
     def get_frequency(self, channel):
-        
+        """
+        Given a channel index, return the corresponding frequency string from the frequency_list.
+
+        Args:
+            channel (int): The channel index to look up.
+
+        Returns:
+            str or None: The frequency string (e.g., "38 kHz") if found, otherwise None.
+
+        Example:
+            >>> km = KMClusterMap(...)
+            >>> km.frequency_list = [[0, "38 kHz"], [1, "120 kHz"]]
+            >>> km.get_frequency(0)
+            '38 kHz'
+        """
         for frequency in self.frequency_list:
+            # frequency is expected to be [channel_index, frequency_string]
             if frequency[0] == channel:
                 return frequency[1]
+            else:
+                return None  # Return None if channel not found
         
             
     def get_channel(self, frequency):
-        
+        """
+        Given a frequency string, return the corresponding channel index from the frequency_list.
+
+        Args:
+            frequency (str): The frequency string to look up (e.g., "38 kHz").
+
+        Returns:
+            int or None: The channel index if found, otherwise None.
+
+        Example:
+            >>> km = KMClusterMap(...)
+            >>> km.frequency_list = [[0, "38 kHz"], [1, "120 kHz"]]
+            >>> km.get_channel("38 kHz")
+            0
+        """
         for frequency in self.frequency_list:
+            # frequency is expected to be [channel_index, frequency_string]
             if frequency[1] == frequency:
                 return frequency[0]
+        return None  # Return None if frequency not found
 
-def main(): # Defines main method. This source code serves as a python module as well as an executable script becasue it can be run if a json is fed in. For example ; $ python3 echoml.py test.json 
-    """Defines main method. This method makes this source code executable if json is passed. An example call ; $ python3 echoml.py km_config.json
-    """
-    for i in range(len(sys.argv)): # For each json argument passed to python file.
-        
-        if i == 0: # Ignore first argument ('python or python3').
-            
-            pass # Pass.
-        
-        else: # For every other argument.
-            
-            # Open JSON file
-            logger.info('Opening '+sys.argv[i])
-            
-            f = open(sys.argv[i]) # File object which can be used to create python class object representations of files.
-            data = json.load(f) # Create json data object compadible with python functionality.
-            json_formatted_str = json.dumps(data, indent=4) # Logs the config json.
-            logger.info(json_formatted_str) # Logging message.
-            KMClusterMap(
-        
-                # Path Configuration
-                EK_data_path =  data["path_config"]["EK_data_path"],
-                EK_data_filenames =  data["path_config"]["EK_data_filenames"],
-                save_path = data["path_config"]["save_path"],                                       # Save directory where contents will be stored. 
-                
-                # Path Configuration
-                
-                sonar_model = data["sonar_model"], 
-                
-                # KMeans Configuration
-                
-                frequency_list = data["kmeans_config"]["frequency_list"],                           # List of frequencies to be included into the KMeans clustering operation. There must be atleast two otherwise operation is meaningless.
-                cluster_count = data["kmeans_config"]["cluster_count"],                             # The quantity of clusters (colors) the data is clustered into.
-                random_state = data["kmeans_config"]["random_state"],                               # Random state variable needed for KMeans operations.
-                
-                n_init = data["kmeans_config"]["n_init"],
-                max_iter = data["kmeans_config"]["max_iter"],
-                
-                model = data["kmeans_config"]["model"],                                             # Paramaters may be "DIRECT" or "ABSOLUTE_DIFFERENCES" and defaults to "DIRECT". This reffers to the way the Sv values of a given set of frequencies are being compared in the clustering algorithm.
-                
-                
-                # Plotting
-                
-                color_map = data["plotting"]["color_map"],                                          # Color map variable. Defaults to "viridis" Check out https://matplotlib.org/stable/tutorials/colors/colormaps.html to see options. Examples include 'jet', 'plasma', 'inferno', 'magma', 'cividis'.
-                plot = data["plotting"]["plot"],                                                    # Plot the cluster map. ( As opposed to just saving the map. )
-                    
-                
-                # MVBS & Data Reduction
-                
-                data_reduction_type = data["data_reduction"]["data_reduction_type"],                # Must be one of two string options, "physical_units" or "sample_number" or comment out to default to None .
-                range_meter_bin = data["data_reduction"]["range_meter_bin"],                        # Range meter resolution .
-                ping_time_bin = data["data_reduction"]["ping_time_bin"],                            # Ping time resolution .
-                range_sample_num = data["data_reduction"]["range_sample_num"],                      # Range sample resolution.
-                ping_num = data["data_reduction"]["ping_num"],                                      # Ping sample resoluition.
-                
-                    
-                # Noise Removal
-                
-                remove_noise = data["noise_removal"],                                               # Removes noise.
-                
-                
-                # Rectangular Subselection
-                
-                ping_time_begin = data["sub_selection"]["rectangular"]["ping_time_begin"],          # For rectangular datasubset selection. Select integer or datetime value.
-                ping_time_end = data["sub_selection"]["rectangular"]["ping_time_end"],              # For rectangular datasubset selection. Select integer or datetime value.
-                range_sample_begin = data["sub_selection"]["rectangular"]["range_sample_begin"],    # For rectangular datasubset selection. Select integer value.
-                range_sample_end = data["sub_selection"]["rectangular"]["range_sample_end"],        # For rectangular datasubset selection. Select integer value.
-                
-                
-                # Line Files       
-                
-                line_files = data["sub_selection"]["line_files"],                                   # Line files.
-                region_files = data["sub_selection"]["region_files"]                                # Region files.
-                
-            )
-            
-            f.close() # Close json configuration file.
-            
-            
-
-if __name__=="__main__": # If script is executed as an argument to 'python'.
-    
-    main() # Run main method.
