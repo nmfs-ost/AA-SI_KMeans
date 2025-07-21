@@ -1,5 +1,6 @@
 # Imports for command-line parsing, file operations, config loading, and clustering
 import argparse
+from calendar import c
 import os
 import sys
 import yaml  # For loading YAML config files
@@ -23,23 +24,20 @@ def load_config(config_path):
     with open(config_path, 'r') as f:
         if ext == ".yaml" or ext == ".yml":
             return yaml.safe_load(f)  # Load YAML config
-        elif ext == ".json":
-            return json.load(f)  # Load JSON config
         else:
             raise ValueError("Unsupported config file type: must be .yaml or .json")
 
-def save_config(config, save_path):
+def save_config(config, save_path, name):
     save_path = Path(save_path).resolve()
-    print(save_path)
     # Define the directory where the YAML will be saved
-    encoded_dir = save_path / "ENCODED_DIRECTORY"
-    encoded_dir.mkdir(parents=True, exist_ok=True)
+    asset_path = save_path / name
+    asset_path.mkdir(parents=True, exist_ok=True)
 
     # Decide filename (optional: base it on input_path or fixed name)
-    yaml_filename = "ENCODED_YAML.yaml"
+    yaml_filename = name + ".yaml"
 
-    yaml_path = encoded_dir / yaml_filename
-
+    yaml_path = asset_path / yaml_filename
+    config["asset_path"] = str(asset_path)  # Store the directory in config
     logger.debug(f"Saving config to {yaml_path} (YAML) derived from {config.get('input_path', 'unknown')}")
     
     with open(yaml_path, "w") as f:
@@ -89,7 +87,7 @@ def parse_args():
     parser.add_argument("--raw_path", help="(str) Override .raw path\n  e.g., --raw_path /data/file.raw")
     parser.add_argument("--nc_path", help="(str) Override .nc path\n  e.g., --nc_path /data/file.nc")
     parser.add_argument("--yaml_path", help="(str) Load config from YAML\n  e.g., --yaml_path config.yaml")
-    parser.add_argument("--json_path", help="(str) Load config from JSON\n  e.g., --json_path config.json")
+    parser.add_argument("--name", help="(str) Name for saving outputs\n  e.g., --name my_output")
     parser.add_argument("--region_files", nargs='+',
                         help="(list of str) Paths to region files\n  e.g., --region_files reg1.reg reg2.reg")
     parser.add_argument("--line_files", nargs='+',
@@ -186,14 +184,16 @@ def main():
             raw_path = None
             config["input_path"] = nc_path
             config["nc_path"] = nc_path  # Set nc_path in config
-            c
+            
         else:
             raw_path = str(input_path)
             nc_path = None
             config["input_path"] = raw_path
             config["raw_path"] = raw_path  # Set raw_path in config
         
-        config["yaml_path"] = yaml_file
+        config["name"] = input_path.stem
+        config["yaml_path"] = str((Path(config['save_path']) / f"{config['name']}" / f"{config['name']}.yaml").resolve())
+
 
     else:
         print("Unsupported file type for input_path.")
@@ -209,7 +209,7 @@ def main():
     
     config = override_config_with_args(config, args)
 
-    save_config(config, config["save_path"])
+    save_config(config, config["save_path"], config["name"])
 
         # Step 3: Override config
     

@@ -10,7 +10,8 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-import hvplot.pandas  # enables df.hvplot()
+import hvplot.xarray  # ensure hvplot is enabled
+import holoviews as hv
 
 # Machine Learning tools.
 
@@ -341,7 +342,6 @@ class KMClusterMap:
             setattr(self, key, value)
         
             
-        self.file_name = self.input_path.split("."+self.input_path.split(".")[-1])[0].replace(".","").split("/")[-1]
         self.frequency_list_string = self.construct_frequency_list_string()
         self.construct_kmeans_clustergram() # This is the function which constructs the kmeans clustergram. It is called at the end of the run() function.
         
@@ -398,9 +398,14 @@ class KMClusterMap:
                 logger.info('Saving cluster map and corresponding echograms...')    # Logging message.
                 self.full_save(self.kmeans_operation.Sv) # This saves the kmeans cluster map and a corresponding echogram for each involved frequency.
             
-            if self.plot == True:
+            if self.plot_echograms == True:
                 
                 logger.info('Plotting cluster map and corresponding echograms...')    # Logging message.    
+                plt.show()
+                
+            if self.plot_clustergrams == True:
+                
+                logger.info('Plotting cluster map and corresponding clustergrams...')    # Logging message.    
                 plt.show()
             
             
@@ -720,31 +725,49 @@ class KMClusterMap:
         plt.gca().invert_yaxis()
         # Show the plot
         plt.show()
+        plt.clf()  # clear current figure
+        plt.cla()  # clear current axes
+
         
     def save_echogram(self, data_array, channel):
         
-
+        frequency =self.get_frequency(channel)
+         # Get the channel index from the frequency string.
         #cmap = plt.get_cmap(self.color_map, self.n_clusters)
-        logger.info("Saving echogram for frequency: " + self.get_frequency(channel) + ", channel: " + str(channel))      
-        data_array[channel].transpose("range_sample","ping_time").plot()
-        plt.title("frequency = "+self.get_frequency(channel)+",    file = "+self.input_path+",    colormap = "+self.color_map)
+        logger.info("Saving echogram for frequency: " + frequency + ", channel: " + str(channel))      
+        # Transpose and plot using hvplot
+        plot = data_array[int(channel)].transpose("range_sample", "ping_time").hvplot(
+            x="ping_time",
+            y="range_sample",
+            cmap=self.color_map,
+            title=f"frequency = {frequency},    file = {self.input_path},    colormap = {self.color_map}",
+            invert_yaxis=True,
+            aspect='auto'
+        )
+
+        # Save as static image or HTML
+        #title = f"{self.asset_path}/eg:{self.name}<{frequency}>.html"
         
-        plt.gca().invert_yaxis()
-        plt.savefig(fname = self.save_path+"/eg:"+self.file_name+"<"+self.get_frequency(channel)+">", dpi=2048)   
-    
         
+        #hv.save(plot, title, backend='bokeh')
+
+
+
+
     def save_clustergram(self, Sv):
 
         #cmap = plt.get_cmap(self.color_map, self.n_clusters) 
         Sv["km_cluster_map"+self.kmeans_operation.frequency_set_string][0].transpose("range_sample","ping_time").plot()
         plt.title(self.kmeans_operation.frequency_set_string+",    n_clusters = "+str(self.n_clusters)+",    random_state = "+str(self.random_state)+",    file = "+self.input_path+",    colormap = "+self.color_map)
         plt.gca().invert_yaxis()
-        plt.savefig(self.save_path+"/km:"+self.file_name+"<"+ self.frequency_list_string+"k="+str(self.n_clusters)+"_rs="+str(self.random_state)+"_cm="+self.color_map+"_md="+str(self.precluster_model)+"_rmb="+str(self.range_meter_bin)+">", dpi=2048)
+        plt.savefig(self.asset_path+"/km:"+self.name+"<"+ self.frequency_list_string+"k="+str(self.n_clusters)+"_rs="+str(self.random_state)+"_cm="+self.color_map+"_md="+str(self.precluster_model)+"_rmb="+str(self.range_meter_bin)+">", dpi=2048)
+        plt.clf()  # clear current figure
+        plt.cla()  # clear current axes
 
 
     def full_save(self, Sv):
         self.save_clustergram(Sv)
-        for frequency in self.frequency_list:
+        for frequency in self.frequency_map:
             self.save_echogram(self.Sv["Sv"],frequency[0])
 
     def construct_frequency_list_string(self):
@@ -784,12 +807,10 @@ class KMClusterMap:
             >>> km.get_frequency(0)
             '38 kHz'
         """
-        for frequency in self.frequency_list:
+        for frequency in self.frequency_map:
             # frequency is expected to be [channel_index, frequency_string]
-            if frequency[0] == channel:
+            if str(frequency[0]) == str(channel):
                 return frequency[1]
-            else:
-                return None  # Return None if channel not found
         
             
     def get_channel(self, frequency):

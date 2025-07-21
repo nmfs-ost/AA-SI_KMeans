@@ -35,7 +35,7 @@ n_clusters: 8             # (int) Number of clusters to form
 n_init: 2                 # (int) Number of times the algorithm is run with different centroid seeds
 max_iter: 300             # (int) Maximum number of iterations per run
 random_state: 42          # (int) Seed for random number generator to ensure reproducibility
-pre_clustering_model: DIRECT  # (string) Pre-processing model: "DIRECT" or "MVBS"
+precluster_model: DIRECT  # (string) Pre-processing model: "DIRECT" or "MVBS"
 
 
 # ------------------------------------------------------------------------------
@@ -45,9 +45,9 @@ cluster_mvbs: true       # (bool) Set to true to compute MVBS
 range_var: "echo_range"  # Must be one of echo_range or depth. Note that depth is only available if the input dataset contains depth as a data variable.
 ping_num: 2              # (int) Number of pings per bin (if using ping-based binning)
 ping_time_bin: 2S        # (string) Size of time bin for ping averaging, e.g., "2S" for 2 seconds
-range_bin: 2             # (float) Range bin size in meters, e.g., 2.0
+range_bin: 20m           # (float) Range bin size in meters, e.g., 2.0
 range_sample_num: 1      # (int) Number of range samples per bin
-
+range_meter_bin: 2
 # ------------------------------------------------------------------------------
 # COMPUTE NASC (Nautical Areal Scattering Coefficient) Configuration
 # ------------------------------------------------------------------------------
