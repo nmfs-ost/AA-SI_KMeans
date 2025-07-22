@@ -31,3 +31,9 @@ classifiers = [
 
 [project.scripts]
 aa-km = "KMeans.parser:main"
+
+[tool.setuptools]
+packages = ["KMeans"]
+
+[tool.setuptools.package-data]
+KMeans = ["default_config.yaml"]
