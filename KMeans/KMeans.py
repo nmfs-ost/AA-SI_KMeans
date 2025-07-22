@@ -36,6 +36,7 @@ import yaml
 
 pd.set_option('display.max_columns', None)  
 pd.set_option('display.expand_frame_repr', False)
+hvplot.extension('matplotlib')
 
 class FrequencyData():
     """Given some dataset 'Sv', list all frequencies available. This class offers methods which help map out frequencies and channels plus additional utilities. 
@@ -460,7 +461,7 @@ class KMClusterMap:
             ed = ep.open_raw(raw_file=raw_file, sonar_model='EK60')
 
             # Convert the raw file to NetCDF format and save it to the specified directory
-            ed.to_netcdf(save_path=self.save_path)
+            ed.to_netcdf(save_path = self.asset_path )
 
             # Compute Sv (volume backscattering strength) from the echodata object,
             # drop any NaN values along the 'range_sample' dimension,
@@ -709,7 +710,7 @@ class KMClusterMap:
         # Get the colormap with the number of clusters
         cmap = plt.get_cmap(self.color_map, self.n_clusters)
         # Plot the first channel's cluster map, transposed for correct orientation
-        Sv["km_cluster_map"+self.kmeans_operation.frequency_set_string][0].transpose("range_sample","ping_time").plot(cmap=cmap)
+        Sv["km_cluster_map"+self.kmeans_operation.frequency_set_string][0].transpose("range_sample","ping_time").plot(cmap=cmap )
         # Optionally, you could plot the original Sv for comparison (commented out)
         # self.Sv["Sv"][0].transpose("range_sample","ping_time").plot()
 
@@ -725,8 +726,7 @@ class KMClusterMap:
         plt.gca().invert_yaxis()
         # Show the plot
         plt.show()
-        plt.clf()  # clear current figure
-        plt.cla()  # clear current axes
+        plt.close()
 
         
     def save_echogram(self, data_array, channel):
@@ -736,34 +736,53 @@ class KMClusterMap:
         #cmap = plt.get_cmap(self.color_map, self.n_clusters)
         logger.info("Saving echogram for frequency: " + frequency + ", channel: " + str(channel))      
         # Transpose and plot using hvplot
+        # Create the plot
         plot = data_array[int(channel)].transpose("range_sample", "ping_time").hvplot(
             x="ping_time",
             y="range_sample",
-            cmap=self.color_map,
-            title=f"frequency = {frequency},    file = {self.input_path},    colormap = {self.color_map}",
+            cmap=self.echogram_color_map,
+            title=f"frequency = {frequency},    file = {self.input_path},    colormap = {self.echogram_color_map}",
             invert_yaxis=True,
-            aspect='auto'
+            aspect='auto',
+            width=2400,   # adjust as needed
+            height=1600
         )
 
-        # Save as static image or HTML
-        #title = f"{self.asset_path}/eg:{self.name}<{frequency}>.html"
-        
-        
-        #hv.save(plot, title, backend='bokeh')
+        # Save the plot as HTML
+        hv.save(plot, f"{self.asset_path}/eg_{self.name}_{frequency}.html")
 
 
 
 
     def save_clustergram(self, Sv):
 
-        #cmap = plt.get_cmap(self.color_map, self.n_clusters) 
-        Sv["km_cluster_map"+self.kmeans_operation.frequency_set_string][0].transpose("range_sample","ping_time").plot()
-        plt.title(self.kmeans_operation.frequency_set_string+",    n_clusters = "+str(self.n_clusters)+",    random_state = "+str(self.random_state)+",    file = "+self.input_path+",    colormap = "+self.color_map)
-        plt.gca().invert_yaxis()
-        plt.savefig(self.asset_path+"/km:"+self.name+"<"+ self.frequency_list_string+"k="+str(self.n_clusters)+"_rs="+str(self.random_state)+"_cm="+self.color_map+"_md="+str(self.precluster_model)+"_rmb="+str(self.range_meter_bin)+">", dpi=2048)
-        plt.clf()  # clear current figure
-        plt.cla()  # clear current axes
+        color_map = plt.get_cmap(self.clustergram_color_map, self.n_clusters)
+        Sv["km_cluster_map"+self.kmeans_operation.frequency_set_string][0].transpose("range_sample","ping_time").plot(cmap=color_map, label="Cluster Number / Distance from Centroid")  # Plot the cluster map for the first channel.
+        
 
+        
+        
+        #plot = Sv["km_cluster_map"+self.kmeans_operation.frequency_set_string][0].transpose("range_sample","ping_time").hvplot(
+        #     x="ping_time",
+        #     y="range_sample",
+        #     cmap=self.clustergram_color_map,
+        #     title=self.kmeans_operation.frequency_set_string+",    n_clusters = "+str(self.n_clusters)+",    random_state = "+str(self.random_state)+",    file = "+self.input_path+",    colormap = "+self.clustergram_color_map,
+        #     invert_yaxis=True,
+        #     aspect='auto',
+        #     width=2400,   # adjust as needed
+        #     height=1600,
+        #     color_levels=self.n_clusters
+        # )
+
+        
+        plt.title(self.kmeans_operation.frequency_set_string+",    n_clusters = "+str(self.n_clusters)+",    random_state = "+str(self.random_state)+",    file = "+self.input_path+",    colormap = "+self.clustergram_color_map)
+        plt.gca().invert_yaxis()
+        plt.savefig(self.asset_path+"/km:"+self.name+"<"+ self.frequency_list_string+"k="+str(self.n_clusters)+"_rs="+str(self.random_state)+"_cm="+self.clustergram_color_map+"_md="+str(self.precluster_model)+"_rmb="+str(self.range_meter_bin)+">", dpi=2048)
+        plt.show()
+        plt.close()  # close the plot to free memory
+        
+        #hv.save(plot, f"{self.asset_path}/cg_{self.name}_{self.kmeans_operation.frequency_set_string}.png")
+        
 
     def full_save(self, Sv):
         self.save_clustergram(Sv)

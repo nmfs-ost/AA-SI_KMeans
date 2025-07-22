@@ -25,7 +25,7 @@ def load_config(config_path):
         if ext == ".yaml" or ext == ".yml":
             return yaml.safe_load(f)  # Load YAML config
         else:
-            raise ValueError("Unsupported config file type: must be .yaml or .json")
+            raise ValueError("Unsupported config file type: must be .yaml or .yml")
 
 def save_config(config, save_path, name):
     save_path = Path(save_path).resolve()
@@ -126,27 +126,33 @@ def parse_args():
     parser.add_argument("--range_sample_end", type=int,
                         help="(int) End sample index\n  e.g., --range_sample_end 500")
 
-    # Data reduction
-    parser.add_argument("--mvbs_data_reduction_type",
-                        help="(str) Reduction type\n  e.g., --mvbs_data_reduction_type ping")
-    parser.add_argument("--mvbs_ping_num", type=int,
+    # MVBS options
+    parser.add_argument("--ping_num", type=int,
                         help="(int) Number of pings to average\n  e.g., --mvbs_ping_num 5")
-    parser.add_argument("--mvbs_ping_time_bin",
+    parser.add_argument("--ping_time_bin",
                         help="(str) Time bin size\n  e.g., --mvbs_ping_time_bin 5s")
-    parser.add_argument("--mvbs_range_meter_bin", type=float,
+    parser.add_argument("--range_meter_bin", type=float,
                         help="(float) Range bin size in meters\n  e.g., --mvbs_range_meter_bin 1.0")
-    parser.add_argument("--mvbs_range_sample_num", type=int,
-                        help="(int) Range samples per bin\n  e.g., --mvbs_range_sample_num 20")
-
+    parser.add_argument("--range_sample_num", type=int,
+                        help="(int) Range samples per bin\n  e.g., --range_sample_num 20")
+    parser.add_argument("--range_bin", type=str, help="(str) Range binning method\n  e.g., --range_bin 20m")
+    parser.add_argument("--range_var", type=str, help="(str) Range variable name\n  e.g., --range_var echo_range")
     # Save path
     parser.add_argument("--save_path", help="(str) Output path\n  e.g., --save_path results/output.yaml")
-
+    
+    parser.add_argument("--save_nc", action="store_true", default=False, help="(bool) Save results as .nc file (default: False; set this flag to enable)")
+    parser.add_argument("--save_echograms", action="store_true", default=True, help="(bool) Save echograms (default: True; set this flag to disable)")
+    parser.add_argument("--save_clustergrams", action="store_true", default=True, help="(bool) Save cluster maps (default: True; set this flag to disable)")
+    parser.add_argument("--echogram_color_map", help="(str) Colormap for echograms\n  e.g., --echogram_color_map viridis")
+    parser.add_argument("--clustergram_color_map", help="(str) Colormap for cluster maps\n  e.g., --clustergram_color_map plasma")
+    
+    
     return parser.parse_args()
 
 
 def override_config_with_args(config: dict, args: argparse.Namespace) -> dict:
     args_dict = vars(args)  # Converts Namespace to dict
-    print(f"Overriding config with args: {args_dict}")
+    
     for key, val in args_dict.items():
         if val is not None:
             # For lists, only override if it's not empty
@@ -196,16 +202,10 @@ def main():
 
 
     else:
-        print("Unsupported file type for input_path.")
+        logger("Unsupported file type for input_path. Must be .yaml, .yml, .raw, or .nc")
         sys.exit(1)
         
     
-
-
-    # Save updated config if output path is specified
-    #if args.yaml_path or args.json_path:
-        
-    #    save_path = args.yaml_path or args.json_path
     
     config = override_config_with_args(config, args)
 
@@ -216,12 +216,13 @@ def main():
     logger.debug(f"Saved updated config to {config['save_path']}")
     # Log the config for debugging
     logger.info("Configuration post-overrides:")
-    logger.info(config)
-    
+    logger.info(json.dumps(config, indent=4))
+
     # Run the clustering if specified by flag or config
     if args.run_kmeans or config.get("run_kmeans", True):
-        print("Running KMeans clustering with the following configuration:")
-        KMClusterMap(config["yaml_path"])
+
+        KMClusterMap(config["yaml_path"]) # So this is the new configuration that was just saved. This is one reason why its own path is self-referential
+
 
 # Standard Python entry point
 if __name__ == "__main__":

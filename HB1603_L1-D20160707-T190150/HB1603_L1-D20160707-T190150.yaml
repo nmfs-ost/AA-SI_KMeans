@@ -1,0 +1,56 @@
+aasi_kmeans_version: null
+asset_path: /home/mryan/Documents/GitHub/AA-SI_KMeans/HB1603_L1-D20160707-T190150
+cluster_mvbs: true
+cluster_nasc: false
+clustergram_color_map: jet
+clustergram_ratios:
+  120kHz: 1.0
+  18kHz: 1.0
+  200kHz: 1.0
+  38kHz: 1.0
+  70kHz: 1.0
+echogram_color_map: viridis
+echopype_version: null
+frequency_list:
+- 38kHz
+- 200kHz
+init: k-means++
+input_path: /home/mryan/Desktop/HB1603_L1-D20160707-T190150.raw
+line_files: null
+matplotlib_version: null
+max_iter: 300
+n_clusters: 30
+n_init: 2
+name: HB1603_L1-D20160707-T190150
+nc_path: null
+numpy_version: null
+pandas_version: null
+ping_num: 2
+ping_time_begin: null
+ping_time_bin: 2s
+ping_time_end: null
+plot_clustergrams: true
+plot_clustermaps: true
+plot_echograms: true
+precluster_model: DIRECT
+python_version: null
+random_state: 42
+range_bin: 20m
+range_meter_bin: 2
+range_sample_begin: null
+range_sample_end: null
+range_sample_num: 1
+range_var: echo_range
+raw_path: /home/mryan/Desktop/HB1603_L1-D20160707-T190150.raw
+region_files: null
+remove_noise: true
+run_kmeans: true
+save_clustergrams: true
+save_echograms: true
+save_nc: false
+save_path: .
+scikit_learn_version: null
+scipy_version: null
+sonar_model: EK60
+xarray_version: null
+yaml_path: /home/mryan/Documents/GitHub/AA-SI_KMeans/HB1603_L1-D20160707-T190150/HB1603_L1-D20160707-T190150.yaml

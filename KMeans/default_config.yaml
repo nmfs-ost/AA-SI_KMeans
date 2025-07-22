@@ -1,71 +1,86 @@
 # ------------------------------------------------------------------------------
+# CLUSTERGRAM RATIOS (GENERATED AUTOMATICALLY)
+# ------------------------------------------------------------------------------
+
+clustergram_ratios:           # (dict) Ratios for clustergram visualization
+  18kHz: 1.0                  # (float) Ratio for 18 kHz frequency
+  38kHz: 1.0                  # (float) Ratio for 38 kHz frequency
+  70kHz: 1.0                  # (float) Ratio for 70 kHz frequency
+  120kHz: 1.0                 # (float) Ratio for 120 kHz frequency
+  200kHz: 1.0                 # (float) Ratio for 200 kHz frequency
+
+# ------------------------------------------------------------------------------
+# COMPUTE NASC (Nautical Areal Scattering Coefficient) Configuration
+# ------------------------------------------------------------------------------
+
+cluster_nasc: false           # (bool) Set to true to compute NASC from Sv data
+
+# ------------------------------------------------------------------------------
 # FILE AND PATH CONFIGURATION
 # ------------------------------------------------------------------------------
 
-name: null                # (string) Name of the raw file to process (without extension), e.g., "survey_data.raw" -> survey_data
-sonar_model: null         # (string) Sonar model, e.g., "EK60", "EK80"
-input_path: null          # (string) Base directory for input files, e.g., "/data/input/"
-raw_path: null            # (string) Full path to .raw file if known, e.g., "/data/input/survey.raw"
-nc_path: null             # (string) Path to NetCDF (.nc) file, if already converted
-yaml_path: null           # (string) Path to this YAML file for recordkeeping
-save_path: .              # (string) Directory where outputs will be saved, e.g., "/data/output/"
-line_files: null          # (string or list) Optional path(s) to line files used for masking, e.g., "/data/lines.txt"
-region_files: null        # (string or list) Optional path(s) to region files, e.g., "/data/regions.xml"
-
-# ------------------------------------------------------------------------------
-# PROCESSING SETTINGS
-# ------------------------------------------------------------------------------
-
-echosounder: null         # (string) Type of echosounder: "EK60", "EK80", etc.
-frequency_list: null      # (list) Frequencies in Hz to process, e.g., [38000, 120000]
-ping_time_begin: null     # (string) Start time for pings (ISO 8601 format), e.g., "2022-06-01T00:00:00"
-ping_time_end: null       # (string) End time for pings (ISO 8601 format), e.g., "2022-06-01T01:00:00"
-range_sample_begin: null  # (int) Starting sample index in the range dimension, e.g., 100
-range_sample_end: null    # (int) Ending sample index in the range dimension, e.g., 1200
-remove_noise: true        # (bool) Set to true to apply automatic noise removal
-run_kmeans: true          # (bool) Set to true to run K-means clustering
-save_yaml_only: false     # (bool) Set to true to only save the YAML without processing
+input_path: null              # (string) Base directory for input files, e.g., "/data/input/"
+line_files: null              # (string or list) Optional path(s) to line files used for masking, e.g., "/data/lines.txt"
+name: null                    # (string) Name of the raw file to process (without extension), e.g., "survey_data.raw" -> survey_data
+nc_path: null                 # (string) Path to NetCDF (.nc) file, if already converted
+raw_path: null                # (string) Full path to .raw file if known, e.g., "/data/input/survey.raw"
+region_files: null            # (string or list) Optional path(s) to region files, e.g., "/data/regions.xml"
+save_path: .                  # (string) Directory where outputs will be saved, e.g., "/data/output/"
+sonar_model: null             # (string) Sonar model, e.g., "EK60", "EK80"
+yaml_path: null               # (string) Path to this YAML file for recordkeeping
 
 # ------------------------------------------------------------------------------
 # K-MEANS CLUSTERING SETTINGS
 # ------------------------------------------------------------------------------
 
-init: k-means++           # (string) Initialization method: "k-means++" or "random"
-n_clusters: 8             # (int) Number of clusters to form
-n_init: 2                 # (int) Number of times the algorithm is run with different centroid seeds
-max_iter: 300             # (int) Maximum number of iterations per run
-random_state: 42          # (int) Seed for random number generator to ensure reproducibility
-precluster_model: DIRECT  # (string) Pre-processing model: "DIRECT" or "MVBS"
-
+init: k-means++               # (string) Initialization method: "k-means++" or "random"
+max_iter: 300                 # (int) Maximum number of iterations per run
+n_clusters: 8                 # (int) Number of clusters to form
+n_init: 2                     # (int) Number of times the algorithm is run with different centroid seeds
+precluster_model: DIRECT      # (string) Pre-processing model: "DIRECT" or "MVBS"
+random_state: 42              # (int) Seed for random number generator to ensure reproducibility
 
 # ------------------------------------------------------------------------------
 # MVBS (MEAN VOLUME BACKSCATTERING STRENGTH) CONFIGURATION
 # ------------------------------------------------------------------------------
-cluster_mvbs: true       # (bool) Set to true to compute MVBS
-range_var: "echo_range"  # Must be one of echo_range or depth. Note that depth is only available if the input dataset contains depth as a data variable.
-ping_num: 2              # (int) Number of pings per bin (if using ping-based binning)
-ping_time_bin: 2S        # (string) Size of time bin for ping averaging, e.g., "2S" for 2 seconds
-range_bin: 20m           # (float) Range bin size in meters, e.g., 2.0
-range_sample_num: 1      # (int) Number of range samples per bin
-range_meter_bin: 2
-# ------------------------------------------------------------------------------
-# COMPUTE NASC (Nautical Areal Scattering Coefficient) Configuration
-# ------------------------------------------------------------------------------
 
-cluster_nasc: false       # (bool) Set to true to compute NASC from Sv data
+cluster_mvbs: true            # (bool) Set to true to compute MVBS
+ping_num: 2                   # (int) Number of pings per bin (if using ping-based binning)
+ping_time_bin: 2s             # (string) Size of time bin for ping averaging, e.g., "2S" for 2 seconds
+range_bin: 20m                # (float) Range bin size in meters, e.g., 2.0
+range_meter_bin: 2            # (int or float) Range bin size in meters
+range_sample_num: 1           # (int) Number of range samples per bin
+range_var: "echo_range"       # Must be one of echo_range or depth. Note that depth is only available if the input dataset contains depth as a data variable.
 
 # ------------------------------------------------------------------------------
 # PLOTTING OPTIONS
 # ------------------------------------------------------------------------------
 
+clustergram_color_map: jet    # (string) Matplotlib colormap name, e.g., "jet", "viridis", "plasma"
+echogram_color_map: viridis   # (string) Matplotlib colormap name, e.g., "jet", "viridis", "plasma"
 plot_clustermaps: true        # (bool) Set to true to generate cluster map plots
 plot_echograms: true          # (bool) Set to true to generate echogram plots
-color_map: jet                # (string) Matplotlib colormap name, e.g., "jet", "viridis", "plasma"
+save_clustergrams: true       # (bool) Set to true to save clustergrams
+save_echograms: true          # (bool) Set to true to save echograms
+save_nc: false                # (bool) Set to true to save NetCDF output
+
+# ------------------------------------------------------------------------------
+# PROCESSING SETTINGS
+# ------------------------------------------------------------------------------
+
+frequency_list: null          # (list) Frequencies in Hz to process, e.g., [38000, 120000]
+ping_time_begin: null         # (string) Start time for pings (ISO 8601 format), e.g., "2022-06-01T00:00:00"
+ping_time_end: null           # (string) End time for pings (ISO 8601 format), e.g., "2022-06-01T01:00:00"
+range_sample_begin: null      # (int) Starting sample index in the range dimension, e.g., 100
+range_sample_end: null        # (int) Ending sample index in the range dimension, e.g., 1200
+remove_noise: true            # (bool) Set to true to apply automatic noise removal
+run_kmeans: true              # (bool) Set to true to run K-means clustering
 
 # ------------------------------------------------------------------------------
 # SOFTWARE VERSIONS (GENERATED AUTOMATICALLY)
 # ------------------------------------------------------------------------------
 
+aasi_kmeans_version: null     # (string) Version of this KMeans package, e.g., "1.0.0"
 echopype_version: null        # (string) Version of echopype used, e.g., "0.7.1"
 matplotlib_version: null      # (string) Version of matplotlib, e.g., "3.8.0"
 numpy_version: null           # (string) Version of numpy, e.g., "1.26.0"
@@ -74,15 +89,3 @@ python_version: null          # (string) Python interpreter version, e.g., "3.10
 scikit_learn_version: null    # (string) Version of scikit-learn, e.g., "1.3.0"
 scipy_version: null           # (string) Version of scipy, e.g., "1.11.4"
 xarray_version: null          # (string) Version of xarray, e.g., "2023.12.0"
-aasi_kmeans_version: null     # (string) Version of this KMeans package, e.g., "1.0.0"
-
-# ------------------------------------------------------------------------------
-# CLUSTERGRAM RATIOS (GENERATED AUTOMATICALLY)
-# ------------------------------------------------------------------------------
-
-clustergram_ratios:          # (dict) Ratios for clustergram visualization
-  38kHz: 1.0                  # (float) Ratio for 38 kHz frequency
-  70kHz: 1.0                  # (float) Ratio for 70 kHz frequency
-  120kHz: 1.0                 # (float) Ratio for 120 kHz frequency
-  18kHz: 1.0                  # (float) Ratio for 18 kHz frequency
-  200kHz: 1.0                 # (float) Ratio for 200 kHz frequency
