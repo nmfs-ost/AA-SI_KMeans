@@ -457,8 +457,8 @@ class KMClusterMap:
             
             raw_file = self.input_path  # Assign the input path to raw_file variable
 
-            # Open the raw file using echopype, specifying the sonar model as 'EK60'
-            ed = ep.open_raw(raw_file=raw_file, sonar_model='EK60')
+            
+            ed = ep.open_raw(raw_file=raw_file, sonar_model=self.sonar_model)
 
             # Convert the raw file to NetCDF format and save it to the specified directory
             ed.to_netcdf(save_path = self.asset_path )
