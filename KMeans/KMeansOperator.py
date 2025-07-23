@@ -790,7 +790,7 @@ class KMClusterMap:
             ",    colormap = " + self.color_map
         )
         # Invert the y-axis for echogram-style display
-        plt.gca().invert_yaxis()
+        #plt.gca().invert_yaxis()
         # Show the plot
         plt.show()
         plt.close()
@@ -843,7 +843,7 @@ class KMClusterMap:
 
         
         plt.title(self.kmeans_operation.frequency_set_string+",    n_clusters = "+str(self.n_clusters)+",    random_state = "+str(self.random_state)+",    file = "+self.input_path+",    colormap = "+self.clustergram_color_map)
-        plt.gca().invert_yaxis()
+        #plt.gca().invert_yaxis()
         plt.savefig(self.asset_path+"/km:"+self.name+"<"+ self.frequency_list_string+"k="+str(self.n_clusters)+"_rs="+str(self.random_state)+"_cm="+self.clustergram_color_map+"_md="+str(self.precluster_model)+"_rmb="+str(self.range_meter_bin)+">", dpi=300)
         plt.show()
         plt.close()  # close the plot to free memory
