@@ -469,7 +469,7 @@ class KMClusterMap:
                     )
                 else:
                     # If neither path is provided, print an error message
-                    print("YAML file must contain either 'raw_file' or 'nc_file' key.")
+                    logger.error("YAML file must contain either 'raw_file' or 'nc_file' key.")
                     
         # Check if the input file is a .raw file
         if self.input_path.split(".")[-1] == "raw":
@@ -529,6 +529,7 @@ class KMClusterMap:
             
         else:
             logger.info('Sv computed successfully.')
+            logger.debug(f"Sv data:\n{self.Sv}")
             return self.Sv # Return Sv xarray object.
             
 
