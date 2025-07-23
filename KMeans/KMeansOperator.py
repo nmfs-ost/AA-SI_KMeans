@@ -65,7 +65,7 @@ class FrequencyData():
         for i in range(len(self.Sv.Sv)): # Iterate through the natural index associated with Sv.Sv .
             
             self.frequency_list.append(str(self.Sv.Sv[i].coords.get("channel")).split(" kHz")[0].split("GPT")[1].strip()+" kHz") # Extract frequency.
-            
+        logger.debug(f"Constructed frequency list: {self.frequency_list}") # Log the constructed frequency list.    
         return self.frequency_list # Return string array frequency list of the form [18kHz, 70kHz, 200 kHz]
         
         
@@ -344,6 +344,7 @@ class KMClusterMap:
         
             
         self.frequency_list_string = self.construct_frequency_list_string()
+        logger.debug(f"Frequency list string: {self.frequency_list_string}")
         self.construct_kmeans_clustergram() # This is the function which constructs the kmeans clustergram. It is called at the end of the run() function.
         
         
@@ -835,13 +836,11 @@ class KMClusterMap:
             >>> self.construct_frequency_list_string()
             '38 kHz_120 kHz_'
         """
-        # Initialize an empty string to accumulate frequency names
+    def construct_frequency_list_string(self):
         frequency_list_string = ""
-        # Iterate over the frequency_list, which is expected to be a list of [channel_index, frequency_string]
         for frequency in self.frequency_list:
-            # Append the frequency string and an underscore to the result
-            frequency_list_string = frequency_list_string + frequency[1] + "_"
-        # Return the concatenated string of frequencies, separated by underscores
+            frequency_list_string = frequency_list_string + frequency+"_"
+        
         return frequency_list_string
 
     def get_frequency(self, channel):
