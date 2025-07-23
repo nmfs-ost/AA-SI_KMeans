@@ -9,8 +9,9 @@
             "console": "integratedTerminal",
             "args": [
                 "/home/mryan/Desktop/HB1603_L1-D20160707-T190150.raw",
-                "--sonar_model",
-                "EK60"
+                "--sonar_model", "EK60",
+                "--frequency_list", "38kHz", "200kHz",
+                "--n_clusters", "30",
             ]
         }
     ]

@@ -11,6 +11,10 @@ setup(
     url="https://github.com/nmfs-ost/AA-SI_KMeans",
     packages=find_packages(where=".", exclude=["tests", "examples"]),
     include_package_data=True,
+    package_data={
+        "": ["KMeans/default_config.yaml"],
+    },
+
     install_requires=[
         "numpy>=1.21.0",
         "pandas>=1.3.0",
