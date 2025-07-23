@@ -6,7 +6,7 @@ import sys
 import yaml  # For loading YAML config files
 import json  # For loading JSON config files
 from pathlib import Path  # For working with file system paths
-from KMeans import KMClusterMap  # Importing the clustering function/class from KMeans/__init__.py or KMeans/KMeans.py
+from KMeans import KMClusterMap
 from loguru import logger # For logging (optional, can be used for debugging)
 from echopype import __version__ as echopype_version  # Importing echopype version
 from matplotlib import __version__ as matplotlib_version  # Importing matplotlib version
