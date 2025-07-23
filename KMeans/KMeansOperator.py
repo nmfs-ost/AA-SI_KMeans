@@ -823,8 +823,8 @@ class KMClusterMap:
 
     def save_clustergram(self, Sv):
 
-        color_map = plt.get_cmap(self.clustergram_color_map, self.n_clusters)
-        Sv["km_cluster_map"+self.kmeans_operation.frequency_set_string][0].transpose("range_sample","ping_time").plot(cmap=color_map, label="Cluster Number / Distance from Centroid")  # Plot the cluster map for the first channel.
+        #color_map = plt.get_cmap(self.clustergram_color_map, self.n_clusters)
+        #Sv["km_cluster_map"+self.kmeans_operation.frequency_set_string][0].transpose("range_sample","ping_time").plot(cmap=color_map, label="Cluster Number / Distance from Centroid")  # Plot the cluster map for the first channel.
         
 
         
@@ -840,15 +840,32 @@ class KMClusterMap:
         #     height=1600,
         #     color_levels=self.n_clusters
         # )
+        
+        
+        # Get 5 discrete colors from a continuous colormap
+        lut = self.n_clusters
+        cmap_list = [plt.get_cmap(self.clustergram_color_map, lut)(i) for i in range(lut)]
+
+        plot = Sv["km_cluster_map"+self.kmeans_operation.frequency_set_string][0].transpose("range_sample","ping_time").hvplot(
+            x="ping_time",
+            y="range_sample",
+            title=self.kmeans_operation.frequency_set_string+",    n_clusters = "+str(self.n_clusters)+",    random_state = "+str(self.random_state)+",    file = "+self.input_path+",    colormap = "+self.clustergram_color_map,
+            aspect='auto',
+            width=2400,   # adjust as needed
+            height=1600,
+            color='label',
+            cmap=cmap_list,
+            legend='right'
+        )
+        
 
         
-        plt.title(self.kmeans_operation.frequency_set_string+",    n_clusters = "+str(self.n_clusters)+",    random_state = "+str(self.random_state)+",    file = "+self.input_path+",    colormap = "+self.clustergram_color_map)
-        #plt.gca().invert_yaxis()
-        plt.savefig(self.asset_path+"/km:"+self.name+"<"+ self.frequency_list_string+"k="+str(self.n_clusters)+"_rs="+str(self.random_state)+"_cm="+self.clustergram_color_map+"_md="+str(self.precluster_model)+"_rmb="+str(self.range_meter_bin)+">", dpi=300)
-        plt.show()
-        plt.close()  # close the plot to free memory
+        #plt.title(self.kmeans_operation.frequency_set_string+f"\nn_clusters = "+str(self.n_clusters)+f"\nrandom_state = "+str(self.random_state)+f"\nfile = "+self.input_path+f"\ncolormap = "+self.clustergram_color_map)
+        #plt.savefig(self.asset_path+"/km:"+self.name+"<"+ self.frequency_list_string+"k="+str(self.n_clusters)+"_rs="+str(self.random_state)+"_cm="+self.clustergram_color_map+"_md="+str(self.precluster_model)+"_rmb="+str(self.range_meter_bin)+">", dpi=300)
+        #plt.show()
+        #plt.close()  # close the plot to free memory
         
-        #hv.save(plot, f"{self.asset_path}/cg_{self.name}_{self.kmeans_operation.frequency_set_string}.png")
+        hv.save(plot, f"{self.asset_path}/cg_{self.name}_{self.kmeans_operation.frequency_set_string}.png")
         
 
     def full_save(self, Sv):
