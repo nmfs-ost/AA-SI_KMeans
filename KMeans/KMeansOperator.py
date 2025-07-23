@@ -429,16 +429,35 @@ class KMClusterMap:
                 # Now, depending on which path is provided, process accordingly:
                 # If a raw file path is provided in the YAML
                 if raw_path:
-                    # Open the raw file using echopype, specifying the sonar model
-                    ed = ep.open_raw(raw_file=raw_path, sonar_model=self.sonar_model)
-                    # Convert the raw file to NetCDF and save it to the specified directory
-                    ed.to_netcdf(save_path=self.save_path)
-                    # Compute Sv (volume backscattering strength), drop NaNs, and crop to the specified region
-                    self.Sv = ep.calibrate.compute_Sv(ed).dropna(dim="range_sample", how="any").isel(
-                    range_sample=slice(self.range_sample_begin, self.range_sample_end),
-                    ping_time=slice(self.ping_time_begin, self.ping_time_end)
-                    )
+                    
+                    
+                    
+                    if self.sonar_model == "EK80":
+                        # Open the raw file using echopype, specifying the sonar model
+                        ed = ep.open_raw(raw_file=raw_path, sonar_model=self.sonar_model, waveform_mode=self.waveform_mode, encode_mode=self.encode_mode)
+                        # Convert the raw file to NetCDF and save it to the specified directory
+                        if self.save_nc:
+                            ed.to_netcdf(save_path=self.save_path)
+                        # If the sonar model is EK80, we need to convert the Sv data to physical units
+                        self.Sv = ep.calibrate.compute_Sv(ed).dropna(dim="range_sample", how="any").isel(
+                        range_sample=slice(self.range_sample_begin, self.range_sample_end),
+                        ping_time=slice(self.ping_time_begin, self.ping_time_end)
+                        ) 
+                        
+                    else:
+                        # Open the raw file using echopype, specifying the sonar model
+                        ed = ep.open_raw(raw_file=raw_path, sonar_model=self.sonar_model)
+                        # Convert the raw file to NetCDF and save it to the specified directory
+                        if self.save_nc:
+                            ed.to_netcdf(save_path=self.save_path)
+                        # Compute Sv (volume backscattering strength), drop NaNs, and crop to the specified region
+                        self.Sv = ep.calibrate.compute_Sv(ed).dropna(dim="range_sample", how="any").isel(
+                        range_sample=slice(self.range_sample_begin, self.range_sample_end),
+                        ping_time=slice(self.ping_time_begin, self.ping_time_end)
+                        ) 
+                    
                     logger.info('Sv computed from raw file.') # Logging message.
+                    
                 # If a NetCDF file path is provided in the YAML
                 elif nc_path:
                     # Open the already converted NetCDF file using echopype
@@ -454,24 +473,38 @@ class KMClusterMap:
                     
         # Check if the input file is a .raw file
         if self.input_path.split(".")[-1] == "raw":
-            
-            raw_file = self.input_path  # Assign the input path to raw_file variable
+            raw_path = self.input_path  # Assign the input path to raw_path variable
 
             
-            ed = ep.open_raw(raw_file=raw_file, sonar_model=self.sonar_model)
+            ed = ep.open_raw(raw_file=raw_path, sonar_model=self.sonar_model)
 
             # Convert the raw file to NetCDF format and save it to the specified directory
-            ed.to_netcdf(save_path = self.asset_path )
+            if self.save_nc:
+                ed.to_netcdf(save_path=self.save_path)
 
-            # Compute Sv (volume backscattering strength) from the echodata object,
-            # drop any NaN values along the 'range_sample' dimension,
-            # and crop the data to the specified range_sample and ping_time slices
-            self.Sv = ep.calibrate.compute_Sv(ed).dropna(
-            dim="range_sample", how="any"
-            ).isel(
-            range_sample=slice(self.range_sample_begin, self.range_sample_end),
-            ping_time=slice(self.ping_time_begin, self.ping_time_end)
-            )
+            if self.sonar_model == "EK80":
+                # Open the raw file using echopype, specifying the sonar model
+                ed = ep.open_raw(raw_file=raw_path, sonar_model=self.sonar_model, waveform_mode=self.waveform_mode, encode_mode=self.encode_mode)
+                # Convert the raw file to NetCDF and save it to the specified directory
+                if self.save_nc:
+                    ed.to_netcdf(save_path=self.save_path)
+                # If the sonar model is EK80, we need to convert the Sv data to physical units
+                self.Sv = ep.calibrate.compute_Sv(ed).dropna(dim="range_sample", how="any").isel(
+                range_sample=slice(self.range_sample_begin, self.range_sample_end),
+                ping_time=slice(self.ping_time_begin, self.ping_time_end)
+                ) 
+                
+            else:
+                # Open the raw file using echopype, specifying the sonar model
+                ed = ep.open_raw(raw_file=raw_path, sonar_model=self.sonar_model)
+                # Convert the raw file to NetCDF and save it to the specified directory
+                if self.save_nc:
+                    ed.to_netcdf(save_path=self.save_path)
+                # Compute Sv (volume backscattering strength), drop NaNs, and crop to the specified region
+                self.Sv = ep.calibrate.compute_Sv(ed).dropna(dim="range_sample", how="any").isel(
+                range_sample=slice(self.range_sample_begin, self.range_sample_end),
+                ping_time=slice(self.ping_time_begin, self.ping_time_end)
+                )
 
         # Check if the input file is a .nc (NetCDF) file
         if self.input_path.split(".")[-1] == "nc":
