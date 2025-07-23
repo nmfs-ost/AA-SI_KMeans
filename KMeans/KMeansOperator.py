@@ -434,12 +434,12 @@ class KMClusterMap:
                     
                     if self.sonar_model == "EK80":
                         # Open the raw file using echopype, specifying the sonar model
-                        ed = ep.open_raw(raw_file=raw_path, sonar_model=self.sonar_model, waveform_mode=self.waveform_mode, encode_mode=self.encode_mode)
+                        ed = ep.open_raw(raw_file=raw_path, sonar_model=self.sonar_model)
                         # Convert the raw file to NetCDF and save it to the specified directory
                         if self.save_nc:
                             ed.to_netcdf(save_path=self.save_path)
                         # If the sonar model is EK80, we need to convert the Sv data to physical units
-                        self.Sv = ep.calibrate.compute_Sv(ed).dropna(dim="range_sample", how="any").isel(
+                        self.Sv = ep.calibrate.compute_Sv(ed, waveform_mode=self.waveform_mode, encode_mode=self.encode_mode).dropna(dim="range_sample", how="any").isel(
                         range_sample=slice(self.range_sample_begin, self.range_sample_end),
                         ping_time=slice(self.ping_time_begin, self.ping_time_end)
                         ) 
@@ -484,12 +484,12 @@ class KMClusterMap:
 
             if self.sonar_model == "EK80":
                 # Open the raw file using echopype, specifying the sonar model
-                ed = ep.open_raw(raw_file=raw_path, sonar_model=self.sonar_model, waveform_mode=self.waveform_mode, encode_mode=self.encode_mode)
+                ed = ep.open_raw(raw_file=raw_path, sonar_model=self.sonar_model)
                 # Convert the raw file to NetCDF and save it to the specified directory
                 if self.save_nc:
                     ed.to_netcdf(save_path=self.save_path)
                 # If the sonar model is EK80, we need to convert the Sv data to physical units
-                self.Sv = ep.calibrate.compute_Sv(ed).dropna(dim="range_sample", how="any").isel(
+                self.Sv = ep.calibrate.compute_Sv(ed, waveform_mode=self.waveform_mode, encode_mode=self.encode_mode).dropna(dim="range_sample", how="any").isel(
                 range_sample=slice(self.range_sample_begin, self.range_sample_end),
                 ping_time=slice(self.ping_time_begin, self.ping_time_end)
                 ) 
