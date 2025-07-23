@@ -189,8 +189,19 @@ class KMeansOperator: # Reference: https://medium.datadriveninvestor.com/unsuper
             self.frequency_list = [] # Declare a frequency list to be populated with string frequencies of the form [[1,'38kHz'],[2,'120kHz'],[4,'200kHz']] where the first element is meant to be the channel representing the frequency. This is an internal object. Do not interfere.
             for j in self.simple_frequency_list: # For each frequency 'j'.
                 for i in range(len(self.Sv.Sv)): # Check each channel 'i'.
-                    if str(self.Sv.Sv[i].coords.get("channel")).split(" kHz")[0].split("GPT")[1].strip() == j.split("kHz")[0].strip(): # To see if the channel associates with the frequency 'j' .
-                        self.frequency_list.append([i,str(self.Sv.Sv[i].coords.get("channel")).split(" kHz")[0].split("GPT")[1].strip()+" kHz"]) # If so append it and the channel to the 'frequency_list'.
+                    
+                    channel_desc = str(self.Sv.Sv[i].coords.get("channel"))
+                    
+                    if "ES" in channel_desc: # If the channel description contains "ES" then it is an ES channel.
+                        numeric_frequency_desc = str(self.Sv.Sv[i].coords.get("channel")).split("ES")[1].split("-")[0].strip()
+                        if numeric_frequency_desc == j.split("kHz")[0].strip():
+                            self.frequency_list.append([i,numeric_frequency_desc+" kHz"])
+                    
+                    
+                    if "GPT" in channel_desc: # If the channel description contains "GPT" then it is a GPT channel.
+                        numeric_frequency_desc = str(self.Sv.Sv[i].coords.get("channel")).split(" kHz")[0].split("GPT")[1].strip()
+                        if numeric_frequency_desc == j.split("kHz")[0].strip(): # To see if the channel associates with the frequency 'j' .
+                            self.frequency_list.append([i,numeric_frequency_desc+" kHz"]) # If so append it and the channel to the 'frequency_list'.
         else:
             for i in self.channel_list:
                 self.frequency_list.append([i,str(self.Sv.Sv[i].coords.get("channel")).split(" kHz")[0].split("GPT")[1].strip()+" kHz"])
@@ -224,10 +235,31 @@ class KMeansOperator: # Reference: https://medium.datadriveninvestor.com/unsuper
  
  
             for i in self.frequency_list: # Need a channel mapping function.
-                channel_df = self.Sv.Sv[i[0]].to_dataframe(name=None, dim_order=None) # Convert Sv.Sv[channel] into a pandas dataframe.
-                channel_df.rename(columns = {'Sv':str(self.Sv.Sv[i[0]].coords.get("channel")).split("kHz")[0].split("GPT")[1].strip()+"kHz"}, inplace = True) # Rename the column to the frequency associated with said channel. This value is pulled from the xarray.
-                sv_frequency_map_list.append(channel_df[str(self.Sv.Sv[i[0]].coords.get("channel")).split("kHz")[0].split("GPT")[1].strip()+"kHz"]) # Append columns with each frequency or channel. (It is always best to retain a map between channels and frequencies.)
                 
+                
+                channel_desc = str(self.Sv.Sv[i[0]].coords.get("channel"))
+                    
+                if "ES" in channel_desc: # If the channel description contains "ES" then it is an ES channel. Associated wih EK80 data through testing. 
+                    numeric_frequency_desc = str(self.Sv.Sv[i[0]].coords.get("channel")).split("ES")[1].split("-")[0].strip()
+
+                    channel_df = self.Sv.Sv[i[0]].to_dataframe(name=None, dim_order=None) # Convert Sv.Sv[channel] into a pandas dataframe.
+                    channel_df.rename(columns = {'Sv':numeric_frequency_desc+"kHz"}, inplace = True) # Rename the column to the frequency associated with said channel. This value is pulled from the xarray.
+                    sv_frequency_map_list.append(channel_df[numeric_frequency_desc+"kHz"]) # Append columns with each frequency or channel. (It is always best to retain a map between channels and frequencies.)
+            
+            
+                
+                if "GPT" in channel_desc: # If the channel description contains "GPT" then it is a GPT channel.
+                    numeric_frequency_desc = str(self.Sv.Sv[i[0]].coords.get("channel")).split("kHz")[0].split("GPT")[1].strip()
+                    
+                
+    
+                    channel_df = self.Sv.Sv[i[0]].to_dataframe(name=None, dim_order=None) # Convert Sv.Sv[channel] into a pandas dataframe.
+                    channel_df.rename(columns = {'Sv':numeric_frequency_desc+"kHz"}, inplace = True) # Rename the column to the frequency associated with said channel. This value is pulled from the xarray.
+                    sv_frequency_map_list.append(channel_df[numeric_frequency_desc+"kHz"]) # Append columns with each frequency or channel. (It is always best to retain a map between channels and frequencies.)
+            
+            
+            
+            # After iterating through all frequencies, concatenate the list of Series into a DataFrame.                
             pre_clustering_df = pd.concat(sv_frequency_map_list, axis = 1) # Creats a new dataframe from the values previously constructed. This is done to keep it steril.
         
         if self.precluster_model == "ABSOLUTE_DIFFERENCES": # The ABSOLUTE_DIFFERENCES clustering model clusters the absolute value of the differences between a pair permutation of frequency based Sv.Sv values. 
@@ -318,7 +350,7 @@ class KMeansOperator: # Reference: https://medium.datadriveninvestor.com/unsuper
             data=km_cluster_maps,
             dims=['channel', 'ping_time', 'range_sample'],
             attrs=dict(
-                description="The kmeans cluster group number.",
+                description=f"Centroid Distance / Cluster Group Number\nCluster groups with a closer centroid distance are more similar to each other.", 
                 units="Unitless",
                 clusters=self.k,
                 km_frequencies=self.frequency_set_string,
