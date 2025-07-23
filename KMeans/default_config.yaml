@@ -91,5 +91,5 @@ scipy_version: null           # (string) Version of scipy, e.g., "1.11.4"
 xarray_version: null          # (string) Version of xarray, e.g., "2023.12.0"
 
 
-waveform_mode: BB
+waveform_mode: CW
 encode_mode: complex

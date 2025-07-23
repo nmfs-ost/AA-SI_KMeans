@@ -146,6 +146,9 @@ def parse_args():
     parser.add_argument("--echogram_color_map", help="(str) Colormap for echograms\n  e.g., --echogram_color_map viridis")
     parser.add_argument("--clustergram_color_map", help="(str) Colormap for cluster maps\n  e.g., --clustergram_color_map plasma")
     
+    parser.add_argument("--waveform_mode", type=str, default="CW", help="(str) Waveform mode for echopype Used with EK80 data. Default is 'CW'.\n  e.g., --waveform_mode CW")
+    parser.add_argument("--encode_mode", type=str, default="complex", help="(str) Encode mode for echopype Used with EK80 data. Default is 'complex'.\n  e.g., --encode_mode complex")
+    
     
     return parser.parse_args()
 
