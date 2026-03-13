@@ -30,7 +30,7 @@ classifiers = [
 ]
 
 [project.scripts]
-aa-km = "KMeans.parser:main"
+aa-kmeans = "KMeans.parser:main"
 
 [tool.setuptools]
 packages = ["KMeans"]
