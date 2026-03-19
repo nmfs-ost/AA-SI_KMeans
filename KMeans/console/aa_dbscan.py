@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-Console tool for performing KMeans clustering on echosounder NetCDF files.
+Console tool for performing DBSCAN clustering on echosounder NetCDF files.
 
 Accepts an Sv dataset (or other variable), clusters pixels across frequencies
 using either the direct or absolute-differences model, and writes a new
 NetCDF containing integer cluster labels in the same spatial grid as the
-original echogram.
+original echogram.  Unlike KMeans, DBSCAN discovers the number of clusters
+automatically and labels noise points as -1.
 
 Follows the aa-* console-tool architecture:
     - Accepts a file path from STDIN or as a positional argument
@@ -23,11 +24,13 @@ from pathlib import Path
 import xarray as xr
 from loguru import logger
 
-from KMeans.kmeans_core import cluster_dataset, list_channels
+from KMeans.dbscan_core import cluster_dataset
+from KMeans.kmeans_core import list_channels
+
 
 def print_help():
     help_text = """
-    Usage: aa-kmeans [OPTIONS] [INPUT_PATH]
+    Usage: aa-dbscan [OPTIONS] [INPUT_PATH]
 
     Arguments:
     INPUT_PATH                  Path to a NetCDF file containing Sv data.
@@ -35,7 +38,7 @@ def print_help():
 
     Options:
     -o, --output_path           Path to save the cluster-map NetCDF.
-                                Default: <stehttps://80-mryan.cluster-elnmuk7bnbbzqw4vcgtaay3c52.cloudworkstations.dev/labm>_kmeans.nc
+                                Default: <stem>_dbscan.nc
 
     --model                     Clustering model to use.
                                 Choices: abd, dir
@@ -47,8 +50,16 @@ def print_help():
                                         Raw Sv values across channels.
                                 Default: abd
 
-    -k, --n_clusters            Number of KMeans clusters.
-                                Default: 3
+    --eps                       Maximum distance between two samples for them
+                                to be considered neighbours.
+                                Default: 0.5
+
+    --min_samples               Minimum number of points required to form a
+                                dense region (core point threshold).
+                                Default: 5
+
+    --metric                    Distance metric for neighbourhood computation.
+                                Default: euclidean
 
     --channels                  Space-separated 0-based channel indices to use.
                                 Default: all channels in the dataset.
@@ -57,27 +68,26 @@ def print_help():
     --var                       Data variable to cluster on.
                                 Default: Sv
 
-    --n_init                    Number of KMeans initialisations.
-                                Default: 10
-
-    --max_iter                  Maximum iterations per KMeans run.
-                                Default: 300
-
-    --random_state              Random seed for reproducibility.
-                                Default: None
+    --n_jobs                    Number of parallel jobs for distance computation.
+                                -1 uses all available cores.
+                                Default: None (single-threaded)
 
     --list_channels             List available channels and exit.
 
     --quiet                     Suppress logger info, only print output path.
 
     Description:
-    Performs KMeans clustering on multi-frequency echosounder data.
+    Performs DBSCAN clustering on multi-frequency echosounder data.
     The output NetCDF has the same spatial dimensions (ping_time ×
     range_sample) as the input echogram, but contains integer cluster
     labels instead of Sv values.  This "cluster map" can be visualised
     in the same way an echogram is plotted.
 
-    Two models are available:
+    Unlike KMeans, DBSCAN does not require the number of clusters to
+    be specified.  It discovers clusters based on density and labels
+    points that do not belong to any cluster as noise (-1).
+
+    Two feature-matrix models are available:
 
       abd (absolute differences) — default
         For each pair of selected channels, compute |Sv_A - Sv_B|.
@@ -91,9 +101,9 @@ def print_help():
         to contribute redundant information.
 
     Examples:
-      echo file.nc | aa-kmeans --model abd
-      echo file.nc | aa-kmeans --model dir -k 5 --channels 0 1 3
-      aa-kmeans /path/to/input_Sv.nc --model abd -k 4 -o clustered.nc
+      echo file.nc | aa-dbscan --model abd --eps 1.0 --min_samples 10
+      echo file.nc | aa-dbscan --model dir --eps 0.5 --channels 0 1 3
+      aa-dbscan /path/to/input_Sv.nc --eps 2.0 --min_samples 20 -o clustered.nc
     """
     print(help_text)
 
@@ -110,7 +120,7 @@ def main():
             sys.exit(0)
 
     parser = argparse.ArgumentParser(
-        description="Perform KMeans clustering on multi-frequency echosounder Sv data."
+        description="Perform DBSCAN clustering on multi-frequency echosounder Sv data."
     )
 
     # ---------------------------
@@ -126,7 +136,7 @@ def main():
     parser.add_argument(
         "-o", "--output_path",
         type=Path,
-        help="Path to save cluster-map NetCDF (default: <stem>_kmeans.nc).",
+        help="Path to save cluster-map NetCDF (default: <stem>_dbscan.nc).",
     )
 
     # ---------------------------
@@ -137,17 +147,31 @@ def main():
         type=str,
         choices=["abd", "dir"],
         default="abd",
-        help="Clustering model: abd (absolute differences, default) or dir (direct).",
+        help="Feature-matrix model: abd (absolute differences, default) or dir (direct).",
     )
 
     # ---------------------------
-    # KMeans parameters
+    # DBSCAN parameters
     # ---------------------------
     parser.add_argument(
-        "-k", "--n_clusters",
+        "--eps",
+        type=float,
+        default=0.5,
+        help="Maximum neighbourhood radius (default: 0.5).",
+    )
+
+    parser.add_argument(
+        "--min_samples",
         type=int,
-        default=3,
-        help="Number of KMeans clusters (default: 3).",
+        default=5,
+        help="Minimum points to form a dense region (default: 5).",
+    )
+
+    parser.add_argument(
+        "--metric",
+        type=str,
+        default="euclidean",
+        help="Distance metric (default: euclidean).",
     )
 
     parser.add_argument(
@@ -166,24 +190,10 @@ def main():
     )
 
     parser.add_argument(
-        "--n_init",
-        type=int,
-        default=10,
-        help="Number of KMeans initialisations (default: 10).",
-    )
-
-    parser.add_argument(
-        "--max_iter",
-        type=int,
-        default=300,
-        help="Maximum iterations per KMeans run (default: 300).",
-    )
-
-    parser.add_argument(
-        "--random_state",
+        "--n_jobs",
         type=int,
         default=None,
-        help="Random seed for reproducibility (default: None).",
+        help="Parallel jobs for distance computation. -1 = all cores (default: None).",
     )
 
     # ---------------------------
@@ -249,7 +259,7 @@ def main():
     # ---------------------------
     if args.output_path is None:
         args.output_path = args.input_path.with_stem(
-            args.input_path.stem + "_kmeans"
+            args.input_path.stem + "_dbscan"
         ).with_suffix(".nc")
 
     # ---------------------------
@@ -260,20 +270,20 @@ def main():
             args_dict = vars(args)
             pretty_args = pprint.pformat(args_dict)
             logger.debug(
-                f"Executing aa-kmeans configured with [OPTIONS]:\n{pretty_args}\n"
-                f"* ( Each aa-kmeans associated option_name may be "
+                f"Executing aa-dbscan configured with [OPTIONS]:\n{pretty_args}\n"
+                f"* ( Each aa-dbscan associated option_name may be "
                 f"overridden using --option_name value )"
             )
 
         cluster_ds = cluster_dataset(
             ds,
             model=args.model,
-            n_clusters=args.n_clusters,
+            eps=args.eps,
+            min_samples=args.min_samples,
+            metric=args.metric,
             channels=args.channels,
             var=args.var,
-            n_init=args.n_init,
-            max_iter=args.max_iter,
-            random_state=args.random_state,
+            n_jobs=args.n_jobs,
         )
 
         # ---------------------------
@@ -284,7 +294,7 @@ def main():
 
         if not args.quiet:
             logger.info(
-                f"Generating {args.output_path.resolve()} with aa-kmeans. "
+                f"Generating {args.output_path.resolve()} with aa-dbscan. "
                 f"Passing nc path to stdout..."
             )
 
@@ -292,7 +302,7 @@ def main():
         print(args.output_path.resolve())
 
     except Exception as e:
-        logger.exception(f"Error during KMeans clustering: {e}")
+        logger.exception(f"Error during DBSCAN clustering: {e}")
         sys.exit(1)
 
 
