@@ -32,6 +32,7 @@ classifiers = [
 [project.scripts]
 aa-kmeans = "KMeans.console.aa_kmeans:main"
 aa-dbscan = "KMeans.console.aa_dbscan:main"
+aa-report = "KMeans.console.aa_report:main"
 
 [tool.setuptools.packages.find]
 include = ["KMeans*"]
