@@ -3,29 +3,41 @@ kmeans_core.py
 
 Modular KMeans clustering operations for echosounder NetCDF data.
 
-This module provides atomic functions for constructing pre-clustering
-feature matrices and performing KMeans clustering on xarray Datasets
-containing Sv (volume backscattering strength) data. It is designed
-to be consumed by console tools (aa-kmeans) following the Unix
-philosophy of small, composable programs.
+This module implements a unified feature-construction framework for
+multifrequency Sv data, parametrized by two non-negative weights
+(alpha, beta).  For an N-frequency pixel x = (Sv_1, ..., Sv_N), the
+record fed to KMeans is
 
-Two clustering models are supported:
+    phi(x) = ( alpha * c_1, alpha * c_2, ..., alpha * c_N,  beta * Sv_mean )
 
-    direct (dir)
-        Each pixel is represented by a vector of its Sv values across
-        all user-selected channels. The raw multi-frequency Sv values
-        are fed directly into KMeans.
+where
 
-    absolute_differences (abd)  [default]
-        For every unique pair of user-selected channels, the absolute
-        difference |Sv_A - Sv_B| is computed.  These pairwise
-        difference columns become the feature matrix for KMeans.
-        Two identical channels would produce a zero column, so only
-        genuinely distinct frequency information contributes.
+    Sv_mean = (1/N) sum_i Sv_i           ("loudness", common-mode dB)
+    c_i     = Sv_i - Sv_mean             ("colour",   relative response)
+
+The three previously named recipes are corners of this construction:
+
+    preset       alpha   beta   notes
+    -----------  ------  -----  -------------------------------------------
+    "direct"        1      1    Information-equivalent to raw Sv vector
+    "contrast"      1      0    Colour-only; replaces the old "abd" recipe
+    "loudness"      0      1    Mean-only (Sv_mean is the only feature)
+
+A "hybrid" anywhere in alpha > 0, beta > 0 is also supported, and the
+recommended workflow is to sweep beta with alpha fixed at 1 (only the
+ratio matters to KMeans).
+
+NOTE on the change from the old "abd" model:
+    The previous implementation produced N*(N-1)/2 pairwise columns of
+    |Sv_A - Sv_B|.  The new "contrast" preset produces N columns of
+    c_i = Sv_i - mean(Sv).  These two representations encode the same
+    inter-frequency information (up to a choice of reference) but yield
+    different distance geometries in feature space.  The centered
+    representation is the one used in the proposal and is the canonical
+    feature for the unified framework.
 """
 
-import itertools
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict
 
 import numpy as np
 import pandas as pd
@@ -35,24 +47,38 @@ from sklearn.cluster import KMeans
 
 
 # ---------------------------------------------------------------------------
+# Named (alpha, beta) presets
+# ---------------------------------------------------------------------------
+
+PRESETS: Dict[str, Tuple[float, float]] = {
+    # Canonical names from the unified framework
+    "direct":   (1.0, 1.0),  # info-equivalent to raw Sv vector
+    "contrast": (1.0, 0.0),  # colour-only  (a.k.a. relative-response)
+    "loudness": (0.0, 1.0),  # mean-only
+
+    # Back-compat aliases for the old --model values
+    "dir": (1.0, 1.0),
+    "abd": (1.0, 0.0),       # NB: now centered c_i, not pairwise |A-B|
+    "mean": (0.0, 1.0),
+}
+
+
+def resolve_preset(preset: str) -> Tuple[float, float]:
+    """Look up (alpha, beta) for a named preset.  Case-insensitive."""
+    key = preset.lower()
+    if key not in PRESETS:
+        raise ValueError(
+            f"Unknown preset '{preset}'.  Available: {sorted(set(PRESETS))}"
+        )
+    return PRESETS[key]
+
+
+# ---------------------------------------------------------------------------
 # Channel / frequency helpers
 # ---------------------------------------------------------------------------
 
 def list_channels(ds: xr.Dataset, var: str = "Sv") -> List[str]:
-    """Return the list of channel coordinate values in the dataset.
-
-    Parameters
-    ----------
-    ds : xr.Dataset
-        An Sv-style dataset with a ``channel`` dimension.
-    var : str
-        The data variable to inspect (default ``"Sv"``).
-
-    Returns
-    -------
-    list of str
-        Channel coordinate values.
-    """
+    """Return the list of channel coordinate values in the dataset."""
     if "channel" not in ds[var].dims:
         raise ValueError(f"Variable '{var}' has no 'channel' dimension.")
     return [str(c) for c in ds["channel"].values]
@@ -66,19 +92,6 @@ def resolve_channel_indices(
     """Return validated integer indices into the channel dimension.
 
     If *channels* is ``None``, all channels are returned.
-
-    Parameters
-    ----------
-    ds : xr.Dataset
-        Dataset with a ``channel`` dimension.
-    channels : list of int or None
-        0-based indices selected by the user.
-    var : str
-        Data variable to inspect.
-
-    Returns
-    -------
-    list of int
     """
     n_channels = ds.sizes["channel"]
     if channels is None:
@@ -95,7 +108,6 @@ def resolve_channel_indices(
 def _channel_label(ds: xr.Dataset, idx: int) -> str:
     """Best-effort human-readable label for a channel index."""
     raw = str(ds["channel"].values[idx])
-    # Try to extract a numeric frequency from common EK80 patterns
     for prefix in ("GPT", "ES"):
         if prefix in raw:
             try:
@@ -108,110 +120,131 @@ def _channel_label(ds: xr.Dataset, idx: int) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Feature-matrix construction
+# Core decomposition: split loudness from colour
 # ---------------------------------------------------------------------------
 
-def build_feature_matrix_direct(
+def split_loudness_colour(
     ds: xr.Dataset,
     channel_indices: List[int],
     var: str = "Sv",
-) -> pd.DataFrame:
-    """Build the pre-clustering feature matrix using the **direct** model.
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Decompose multifrequency Sv into (loudness, colour) components.
 
-    Each column is the flattened Sv for one channel.
+    For each pixel x = (Sv_1, ..., Sv_N) across the selected channels:
+
+        Sv_mean = (1/N) * sum_i Sv_i           shape (n_pixels,)
+        c_i     = Sv_i - Sv_mean               shape (n_pixels, N)
+
+    NaN propagation: if *any* selected channel is NaN at a given pixel,
+    both Sv_mean and every c_i at that pixel become NaN, so downstream
+    KMeans masking removes the pixel cleanly.
 
     Parameters
     ----------
     ds : xr.Dataset
         Dataset with ``Sv[channel, ping_time, range_sample]``.
     channel_indices : list of int
-        Which channels to include.
+        Channels to include in the decomposition.
     var : str
-        Data variable name.
+        Data variable name (default "Sv").
 
     Returns
     -------
-    pd.DataFrame
-        Columns are labelled with frequency/channel names; rows are pixels.
+    sv_mean : np.ndarray, shape (n_pixels,)
+        Per-pixel common-mode component (loudness).
+    centered : np.ndarray, shape (n_pixels, N)
+        Per-pixel, per-channel deviation from the mean (colour).
     """
-    columns = {}
-    for idx in channel_indices:
-        label = _channel_label(ds, idx)
-        arr = ds[var].isel(channel=idx).values.ravel()
-        columns[label] = arr
-    return pd.DataFrame(columns)
+    arrays = [ds[var].isel(channel=i).values.ravel() for i in channel_indices]
+    stacked = np.stack(arrays, axis=1)            # (n_pixels, N)
+    sv_mean = stacked.mean(axis=1)                # NaN propagates
+    centered = stacked - sv_mean[:, None]         # (n_pixels, N)
+    return sv_mean, centered
 
 
-def build_feature_matrix_abd(
-    ds: xr.Dataset,
-    channel_indices: List[int],
-    var: str = "Sv",
-) -> pd.DataFrame:
-    """Build the pre-clustering feature matrix using the **absolute_differences** model.
-
-    For every unique pair (A, B) of channels, a column
-    ``|Sv(A) - Sv(B)|`` is produced.
-
-    Parameters
-    ----------
-    ds : xr.Dataset
-        Dataset with ``Sv[channel, ping_time, range_sample]``.
-    channel_indices : list of int
-        Which channels to include.
-    var : str
-        Data variable name.
-
-    Returns
-    -------
-    pd.DataFrame
-    """
-    pairs = list(itertools.combinations(channel_indices, 2))
-    if not pairs:
-        raise ValueError(
-            "Absolute-differences model requires at least 2 channels. "
-            f"Got {len(channel_indices)} channel(s)."
-        )
-    columns = {}
-    for a, b in pairs:
-        label_a = _channel_label(ds, a)
-        label_b = _channel_label(ds, b)
-        col_name = f"abs(Sv({label_a})-Sv({label_b}))"
-        arr_a = ds[var].isel(channel=a).values.ravel()
-        arr_b = ds[var].isel(channel=b).values.ravel()
-        columns[col_name] = np.abs(arr_a - arr_b)
-    return pd.DataFrame(columns)
-
+# ---------------------------------------------------------------------------
+# Unified feature-matrix construction
+# ---------------------------------------------------------------------------
 
 def build_feature_matrix(
     ds: xr.Dataset,
-    model: str = "abd",
+    alpha: float = 1.0,
+    beta: float = 1.0,
     channel_indices: Optional[List[int]] = None,
     var: str = "Sv",
 ) -> pd.DataFrame:
-    """Dispatch to the appropriate feature-matrix builder.
+    """Build the unified KMeans feature matrix.
+
+    The record per pixel is
+
+        phi(x) = ( alpha * c_1, ..., alpha * c_N,  beta * Sv_mean )
+
+    Columns whose weight is exactly zero are omitted (so contrast-only
+    drops the mean column, mean-only drops the colour columns).
 
     Parameters
     ----------
     ds : xr.Dataset
-    model : {"abd", "dir"}
+        Dataset with ``Sv[channel, ping_time, range_sample]``.
+    alpha : float, default 1.0
+        Weight on the colour (centered) component.  Must be >= 0.
+    beta : float, default 1.0
+        Weight on the loudness (mean) component.  Must be >= 0.
     channel_indices : list of int or None
+        Channel indices to include (default: all).
     var : str
+        Data variable name.
 
     Returns
     -------
     pd.DataFrame
+        Up to N+1 columns: N weighted-centered + 1 weighted-mean.
     """
+    if alpha < 0 or beta < 0:
+        raise ValueError(
+            f"alpha and beta must be non-negative; got alpha={alpha}, beta={beta}"
+        )
+    if alpha == 0 and beta == 0:
+        raise ValueError(
+            "alpha and beta cannot both be zero — feature matrix would be empty."
+        )
+
     indices = resolve_channel_indices(ds, channel_indices, var=var)
+    if alpha > 0 and len(indices) < 2:
+        raise ValueError(
+            "Colour component (alpha > 0) requires at least 2 channels; "
+            f"got {len(indices)}."
+        )
+
+    sv_mean, centered = split_loudness_colour(ds, indices, var=var)
+
+    columns: Dict[str, np.ndarray] = {}
+    if alpha > 0:
+        for j, idx in enumerate(indices):
+            label = _channel_label(ds, idx)
+            columns[f"alpha*c({label})"] = alpha * centered[:, j]
+    if beta > 0:
+        columns["beta*Sv_mean"] = beta * sv_mean
+
     logger.info(
-        f"Building feature matrix  model={model}  "
-        f"channels={indices}  var={var}"
+        f"Built feature matrix  alpha={alpha}  beta={beta}  "
+        f"channels={indices}  n_columns={len(columns)}  var={var}"
     )
-    if model == "dir":
-        return build_feature_matrix_direct(ds, indices, var=var)
-    elif model == "abd":
-        return build_feature_matrix_abd(ds, indices, var=var)
-    else:
-        raise ValueError(f"Unknown clustering model: '{model}'. Use 'dir' or 'abd'.")
+    return pd.DataFrame(columns)
+
+
+def build_feature_matrix_from_preset(
+    ds: xr.Dataset,
+    preset: str = "direct",
+    channel_indices: Optional[List[int]] = None,
+    var: str = "Sv",
+) -> pd.DataFrame:
+    """Convenience wrapper: build feature matrix using a named (alpha, beta) preset."""
+    alpha, beta = resolve_preset(preset)
+    logger.info(f"Preset '{preset}' -> alpha={alpha}, beta={beta}")
+    return build_feature_matrix(
+        ds, alpha=alpha, beta=beta, channel_indices=channel_indices, var=var
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -227,30 +260,12 @@ def run_kmeans(
 ) -> np.ndarray:
     """Run KMeans on a feature matrix and return integer cluster labels.
 
-    NaN rows are assigned a label of ``-1``; all other rows receive
-    a cluster id in ``[0, n_clusters)``.
-
-    Parameters
-    ----------
-    features : pd.DataFrame
-        The pre-clustering feature matrix (pixels × features).
-    n_clusters : int
-        Number of clusters (k).
-    n_init : int
-        Number of KMeans initialisations.
-    max_iter : int
-        Maximum iterations per run.
-    random_state : int or None
-        Seed for reproducibility.
-
-    Returns
-    -------
-    np.ndarray of int
-        Cluster labels aligned with the rows of *features*.
+    NaN rows are assigned label ``-1``; valid rows get a label in
+    ``[0, n_clusters)``.
     """
     labels = np.full(len(features), -1, dtype=int)
     valid_mask = features.notna().all(axis=1).values
-    n_valid = valid_mask.sum()
+    n_valid = int(valid_mask.sum())
 
     if n_valid == 0:
         logger.warning("No valid (non-NaN) pixels — returning all -1 labels.")
@@ -282,36 +297,14 @@ def labels_to_dataset(
     labels: np.ndarray,
     var: str = "Sv",
 ) -> xr.Dataset:
-    """Reshape flat cluster labels back into the spatial grid of the original
-    echogram and return a new :class:`xr.Dataset`.
-
-    The output has the same ``ping_time`` and ``range_sample`` (or ``depth``,
-    ``echo_range``) dimensions as the first channel of *ds[var]*.  Instead
-    of Sv values, it contains integer cluster labels stored under a single
-    pseudo-channel called ``"cluster"``.
-
-    Parameters
-    ----------
-    ds : xr.Dataset
-        The original Sv dataset (used only for coordinate metadata).
-    labels : np.ndarray
-        1-D array of cluster labels produced by :func:`run_kmeans`.
-    var : str
-        Data variable name used to pull spatial dimensions.
-
-    Returns
-    -------
-    xr.Dataset
-        A lightweight dataset with variable ``cluster_map`` and the same
-        spatial dimensions as a single-channel echogram slice.
+    """Reshape flat cluster labels back into the spatial grid of the
+    original echogram and return a new :class:`xr.Dataset`.
     """
-    # Use first channel as the spatial template
     template = ds[var].isel(channel=0)
-    shape = template.shape  # (ping_time, range_sample/depth/echo_range)
+    shape = template.shape
 
     cluster_2d = labels.reshape(shape)
 
-    # Build the output DataArray
     dims = template.dims
     coords = {d: template.coords[d] for d in dims}
 
@@ -324,7 +317,8 @@ def labels_to_dataset(
             "long_name": "KMeans cluster assignment",
             "description": (
                 "Integer cluster labels produced by KMeans clustering "
-                "of multi-frequency Sv data."
+                "of the unified (alpha, beta) feature matrix on multi-"
+                "frequency Sv data."
             ),
             "units": "1",
         },
@@ -342,37 +336,46 @@ def labels_to_dataset(
 
 def cluster_dataset(
     ds: xr.Dataset,
-    model: str = "abd",
+    alpha: float = 1.0,
+    beta: float = 1.0,
     n_clusters: int = 3,
     channels: Optional[List[int]] = None,
     var: str = "Sv",
     n_init: int = 10,
     max_iter: int = 300,
     random_state: Optional[int] = None,
+    preset: Optional[str] = None,
 ) -> xr.Dataset:
-    """End-to-end: build features → run KMeans → return labelled dataset.
+    """End-to-end: build features -> run KMeans -> return labelled dataset.
 
     Parameters
     ----------
     ds : xr.Dataset
         Sv dataset.
-    model : {"abd", "dir"}
-        Clustering model.
-    n_clusters : int
-        Number of clusters.
+    alpha : float, default 1.0
+        Weight on colour (centered) component.
+    beta : float, default 1.0
+        Weight on loudness (mean) component.
+    n_clusters : int, default 3
     channels : list of int or None
-        Channel indices to use (default: all).
     var : str
-        Data variable.
     n_init, max_iter, random_state
         Forwarded to :func:`run_kmeans`.
+    preset : str or None
+        If given, overrides *alpha* and *beta* with PRESETS[preset].
 
     Returns
     -------
     xr.Dataset
-        Dataset with ``cluster_map`` variable.
+        Dataset with ``cluster_map`` variable, plus (alpha, beta) and
+        related metadata in the global attributes.
     """
-    features = build_feature_matrix(ds, model=model, channel_indices=channels, var=var)
+    if preset is not None:
+        alpha, beta = resolve_preset(preset)
+
+    features = build_feature_matrix(
+        ds, alpha=alpha, beta=beta, channel_indices=channels, var=var
+    )
     labels = run_kmeans(
         features,
         n_clusters=n_clusters,
@@ -381,9 +384,15 @@ def cluster_dataset(
         random_state=random_state,
     )
     out = labels_to_dataset(ds, labels, var=var)
-    out.attrs["clustering_model"] = model
-    out.attrs["n_clusters"] = n_clusters
+    out.attrs["alpha"] = float(alpha)
+    out.attrs["beta"] = float(beta)
+    out.attrs["beta_over_alpha"] = (
+        float(beta) / float(alpha) if alpha > 0 else float("inf")
+    )
+    out.attrs["preset"] = preset if preset is not None else "custom"
+    out.attrs["n_clusters"] = int(n_clusters)
     out.attrs["channels_used"] = str(
         resolve_channel_indices(ds, channels, var=var)
     )
+    out.attrs["feature_columns"] = ", ".join(features.columns)
     return out
