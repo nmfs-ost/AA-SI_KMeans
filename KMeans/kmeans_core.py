@@ -3,40 +3,37 @@ kmeans_core.py
 
 Modular KMeans clustering operations for echosounder NetCDF data.
 
-This module implements a unified feature-construction framework for
-multifrequency Sv data, parametrized by two non-negative weights
-(alpha, beta).  For an N-frequency pixel x = (Sv_1, ..., Sv_N), the
-record fed to KMeans is
+Supports any dB-domain multifrequency acoustic variable through the
+AcousticVariable descriptor registry.  Currently registered:
 
-    phi(x) = ( alpha * c_1, alpha * c_2, ..., alpha * c_N,  beta * Sv_mean )
+    - Sv : Volume backscattering strength (dense echogram grid)
+    - TS : Target strength, single-target detections (sparse)
 
-where
+To add a new variable (s_A, NASC, etc.), append an AcousticVariable
+entry to the ACOUSTIC_VARIABLES dict at the top of this file.
 
-    Sv_mean = (1/N) sum_i Sv_i           ("loudness", common-mode dB)
-    c_i     = Sv_i - Sv_mean             ("colour",   relative response)
+The unified feature construction is variable-agnostic:
 
-The three previously named recipes are corners of this construction:
+    phi(x) = ( alpha * c_1, ..., alpha * c_N,  beta * x_mean )
+
+where x = (x_1, ..., x_N) is the multifrequency vector at one pixel
+(in whatever variable was selected), x_mean is its per-pixel mean
+(loudness), and c_i = x_i - x_mean is the centered colour component
+encoding inter-frequency relations.
+
+Named (alpha, beta) presets:
 
     preset       alpha   beta   notes
     -----------  ------  -----  -------------------------------------------
-    "direct"        1      1    Information-equivalent to raw Sv vector
-    "contrast"      1      0    Colour-only; replaces the old "abd" recipe
-    "loudness"      0      1    Mean-only (Sv_mean is the only feature)
+    "direct"        1      1    Information-equivalent to raw x vector
+    "contrast"      1      0    Colour-only (inter-frequency relations)
+    "loudness"      0      1    Mean-only (loudness scalar)
 
-A "hybrid" anywhere in alpha > 0, beta > 0 is also supported, and the
-recommended workflow is to sweep beta with alpha fixed at 1 (only the
-ratio matters to KMeans).
-
-NOTE on the change from the old "abd" model:
-    The previous implementation produced N*(N-1)/2 pairwise columns of
-    |Sv_A - Sv_B|.  The new "contrast" preset produces N columns of
-    c_i = Sv_i - mean(Sv).  These two representations encode the same
-    inter-frequency information (up to a choice of reference) but yield
-    different distance geometries in feature space.  The centered
-    representation is the one used in the proposal and is the canonical
-    feature for the unified framework.
+Only the ratio beta/alpha matters to KMeans; the recommended workflow
+is to fix alpha=1 and sweep beta.
 """
 
+from dataclasses import dataclass, field, asdict
 from typing import List, Optional, Tuple, Dict
 
 import numpy as np
@@ -44,6 +41,114 @@ import pandas as pd
 import xarray as xr
 from loguru import logger
 from sklearn.cluster import KMeans
+
+
+# ===========================================================================
+# Acoustic variable descriptors
+# ===========================================================================
+# Each supported acoustic variable carries its own scientific identity:
+# what it physically represents, what its loudness/colour components
+# mean biologically, and whether its native data shape is a 2-D
+# echogram grid or a sparse list of single-target detections.  Adding a
+# new variable (s_A, NASC, etc.) means writing one descriptor here, not
+# hunting for hardcoded strings.
+
+@dataclass(frozen=True)
+class AcousticVariable:
+    """Scientific descriptor for a multifrequency acoustic variable."""
+    name: str                     # variable name as it appears in NetCDF (e.g. "Sv", "TS")
+    long_name: str                # human-readable name
+    units: str                    # physical units
+    pixel_population: str         # what one "pixel" represents
+    loudness_meaning: str         # biological meaning of the per-pixel mean
+    colour_meaning: str           # biological meaning of the centered c_i vector
+    detection_filtered: bool      # True if data is sparse (single-target detections)
+    notes: str = ""               # caveats specific to this variable
+
+    def as_dict(self) -> Dict[str, str]:
+        return {k: str(v) for k, v in asdict(self).items()}
+
+
+ACOUSTIC_VARIABLES: Dict[str, AcousticVariable] = {
+    "Sv": AcousticVariable(
+        name="Sv",
+        long_name="Volume backscattering strength",
+        units="dB re 1 m^-1",
+        pixel_population="Every (ping_time, range_sample) cell in the echogram grid.",
+        loudness_meaning=(
+            "Mean Sv across selected channels.  Approximately "
+            "10*log10(n) + <TS>, so a mixture of scatterer density "
+            "and per-target backscatter.  Confounded by range, "
+            "calibration drift, and bulk volume effects."
+        ),
+        colour_meaning=(
+            "Frequency-response signature of whatever is in the "
+            "ensonified volume.  For mixed scatterers this is a "
+            "volume-weighted average.  Robust to additive dB "
+            "contamination (it cancels in the centering)."
+        ),
+        detection_filtered=False,
+        notes="Standard echogram quantity; pixels are dense in (ping, range).",
+    ),
+    "TS": AcousticVariable(
+        name="TS",
+        long_name="Target strength (single-target)",
+        units="dB re 1 m^2",
+        pixel_population=(
+            "Single-target detections only.  Pixels are sparse in "
+            "(ping, range); the bulk of the echogram grid is undefined."
+        ),
+        loudness_meaning=(
+            "Mean TS across selected channels for one detected "
+            "individual.  Primarily a size proxy (TS ~ 20*log10(L) "
+            "for fish, modulo orientation), NOT a density quantity."
+        ),
+        colour_meaning=(
+            "Frequency-response signature of an individual scatterer "
+            "(swim-bladder resonance, body shape, etc.).  Cleaner "
+            "biology than the Sv colour vector because there is no "
+            "volume-averaging across mixed scatterers."
+        ),
+        detection_filtered=True,
+        notes=(
+            "Single-target criteria (pulse-length deviation, "
+            "beam-compensation thresholds) act as a population "
+            "filter: two species with the same true frequency "
+            "response can yield different detection populations if "
+            "they differ in aggregation behaviour.  Fingerprint "
+            "statistics depend on the number of detected targets "
+            "in the ROI, which is typically far smaller than the "
+            "grid-cell count for an Sv fingerprint."
+        ),
+    ),
+}
+
+
+def get_variable_descriptor(name: str) -> AcousticVariable:
+    """Look up an AcousticVariable by name.  Falls back to a generic
+    descriptor for unknown variables so the pipeline still runs."""
+    if name in ACOUSTIC_VARIABLES:
+        return ACOUSTIC_VARIABLES[name]
+    logger.warning(
+        f"No descriptor registered for variable '{name}'; using generic fallback. "
+        f"Add an entry to ACOUSTIC_VARIABLES for proper documentation."
+    )
+    return AcousticVariable(
+        name=name,
+        long_name=f"{name} (unregistered)",
+        units="dB (assumed)",
+        pixel_population="Unspecified.",
+        loudness_meaning="Per-pixel mean across selected channels.",
+        colour_meaning="Per-channel deviation from the per-pixel mean.",
+        detection_filtered=False,
+        notes=(
+            "Variable not in the AcousticVariable registry; the math "
+            "is applied generically.  Interpret with care."
+        ),
+    )
+
+
+# ===========================================================================
 
 
 # ---------------------------------------------------------------------------
@@ -299,6 +404,14 @@ def labels_to_dataset(
 ) -> xr.Dataset:
     """Reshape flat cluster labels back into the spatial grid of the
     original echogram and return a new :class:`xr.Dataset`.
+
+    For dense variables (Sv): produces a fully-populated cluster_map.
+    For detection-filtered variables (TS): the output has the same
+    shape as the input grid, but the bulk of pixels carry label -1
+    (because the underlying TS values were NaN and got masked out).
+    The variable's `detection_filtered` flag is recorded in the
+    output attrs so downstream tools (aa-report, plotters) know to
+    treat the result as a sparse point cloud rather than an image.
     """
     template = ds[var].isel(channel=0)
     shape = template.shape
@@ -308,6 +421,8 @@ def labels_to_dataset(
     dims = template.dims
     coords = {d: template.coords[d] for d in dims}
 
+    desc = get_variable_descriptor(var)
+
     cluster_da = xr.DataArray(
         data=cluster_2d,
         dims=dims,
@@ -316,9 +431,9 @@ def labels_to_dataset(
         attrs={
             "long_name": "KMeans cluster assignment",
             "description": (
-                "Integer cluster labels produced by KMeans clustering "
-                "of the unified (alpha, beta) feature matrix on multi-"
-                "frequency Sv data."
+                f"Integer cluster labels produced by KMeans clustering "
+                f"of the unified (alpha, beta) feature matrix on multi-"
+                f"frequency {desc.long_name} data."
             ),
             "units": "1",
         },
@@ -327,6 +442,11 @@ def labels_to_dataset(
     out_ds = cluster_da.to_dataset(name="cluster_map")
     out_ds.attrs["source_tool"] = "aa-kmeans"
     out_ds.attrs["clustering_variable"] = var
+
+    # Embed the AcousticVariable descriptor for aa-report
+    for key, val in desc.as_dict().items():
+        out_ds.attrs[f"acoustic_variable_{key}"] = val
+
     return out_ds
 
 

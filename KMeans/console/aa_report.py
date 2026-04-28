@@ -38,7 +38,48 @@ import yaml
 from loguru import logger
 
 
-REPORT_VERSION = "2.0"
+REPORT_VERSION = "2.1"
+
+
+# ===========================================================================
+# Acoustic variable descriptor (read back from cluster_map attrs)
+# ===========================================================================
+
+def read_variable_descriptor(attrs: dict) -> dict:
+    """Reconstruct the AcousticVariable descriptor from cluster_map attrs.
+
+    aa-kmeans writes the descriptor as a flat set of `acoustic_variable_*`
+    attributes.  We collect them back into a dict here.  Falls back to a
+    minimal Sv-shaped descriptor for legacy cluster maps that predate the
+    descriptor system, so old files still report sensibly.
+    """
+    desc = {}
+    prefix = "acoustic_variable_"
+    for k, v in attrs.items():
+        if k.startswith(prefix):
+            desc[k[len(prefix):]] = v
+
+    if not desc:
+        # Legacy cluster_map without descriptor — infer minimum from clustering_variable
+        var_name = attrs.get("clustering_variable", "Sv")
+        desc = {
+            "name": var_name,
+            "long_name": f"{var_name} (legacy, no descriptor)",
+            "units": "dB (assumed)",
+            "pixel_population": "Unspecified.",
+            "loudness_meaning": "Per-pixel mean across selected channels.",
+            "colour_meaning": "Per-channel deviation from the per-pixel mean.",
+            "detection_filtered": "False",
+            "notes": (
+                "Cluster map predates the AcousticVariable descriptor "
+                "system; interpret with care."
+            ),
+        }
+
+    # Normalise the boolean
+    df = str(desc.get("detection_filtered", "False")).lower() == "true"
+    desc["detection_filtered_bool"] = df
+    return desc
 
 
 # ===========================================================================
@@ -50,12 +91,16 @@ def _represent_ordereddict(dumper, data):
 
 
 def _represent_float(dumper, data):
-    # Avoid scientific notation and excessive precision in the YAML
+    # Avoid scientific notation, excessive precision, and the noisy !!float tag
     if np.isnan(data):
         return dumper.represent_scalar("tag:yaml.org,2002:null", "")
     if np.isinf(data):
         return dumper.represent_scalar("tag:yaml.org,2002:float", ".inf" if data > 0 else "-.inf")
-    return dumper.represent_scalar("tag:yaml.org,2002:float", f"{data:.6g}")
+    # Force a decimal point so YAML doesn't re-tag whole-number floats as ints
+    text = f"{data:.6g}"
+    if "." not in text and "e" not in text and "n" not in text:
+        text += ".0"
+    return dumper.represent_scalar("tag:yaml.org,2002:float", text)
 
 
 yaml.add_representer(OrderedDict, _represent_ordereddict)
@@ -248,17 +293,18 @@ def compute_centroids(
     ping_slice: slice,
     range_slice: slice,
 ) -> Optional[OrderedDict]:
-    """Compute per-cluster centroids in raw-Sv, colour, and loudness space.
+    """Compute per-cluster centroids in raw, colour, and loudness coordinates.
+
+    Works for any dB-domain variable (Sv, TS, ...).  Centroid keys are
+    templated by the variable name so a TS clustering produces
+    TS_per_channel_dB rather than Sv_per_channel_dB.
 
     For each cluster id present in *cluster_data* (within the ROI), pull
-    the corresponding pixels from the Sv dataset and compute:
-        - mean Sv per channel (raw Sv vector)
-        - mean Sv_mean (loudness)
-        - mean c_i = Sv_i - Sv_mean (colour vector)
-
-    These are the physical fingerprints of each cluster — what makes
-    cluster '0' interpretable instead of arbitrary.
+    the corresponding pixels from the source dataset and compute the
+    mean per channel, the mean loudness (per-pixel mean), and the mean
+    colour (centered) vector.
     """
+    V = sv_var  # variable symbol used for templating ("Sv", "TS", ...)
     try:
         sv = sv_ds[sv_var].isel(
             channel=channel_indices,
@@ -268,14 +314,14 @@ def compute_centroids(
         range_dim = next(d for d in sv.dims if d not in ("channel", "ping_time"))
         sv = sv.isel({range_dim: range_slice})
     except Exception as e:
-        logger.warning(f"Could not align Sv source to cluster map: {e}")
+        logger.warning(f"Could not align {V} source to cluster map: {e}")
         return None
 
     # sv has shape (channel, ping, range); cluster_data is (ping, range)
     sv_arr = sv.values  # (N, P, R)
     if sv_arr.shape[1:] != cluster_data.shape:
         logger.warning(
-            f"Sv ROI shape {sv_arr.shape[1:]} does not match cluster ROI "
+            f"{V} ROI shape {sv_arr.shape[1:]} does not match cluster ROI "
             f"{cluster_data.shape}; skipping centroids."
         )
         return None
@@ -286,10 +332,10 @@ def compute_centroids(
     flat_labels[np.isnan(flat_labels)] = -1
     flat_labels = flat_labels.astype(int)
 
-    # Mean Sv per pixel ("loudness") and centered colour
+    # Mean per pixel ("loudness") and centered colour
     with np.errstate(invalid="ignore"):
-        sv_mean_pix = np.nanmean(flat_sv, axis=1)
-        centered = flat_sv - sv_mean_pix[:, None]
+        mean_pix = np.nanmean(flat_sv, axis=1)
+        centered = flat_sv - mean_pix[:, None]
 
     centroids = OrderedDict()
     for cid in sorted(set(int(x) for x in flat_labels) - {-1}):
@@ -297,14 +343,14 @@ def compute_centroids(
         if not mask.any():
             continue
         with np.errstate(invalid="ignore"):
-            sv_mean_per_chan = np.nanmean(flat_sv[mask], axis=0)
-            loudness_mean = float(np.nanmean(sv_mean_pix[mask]))
+            mean_per_chan = np.nanmean(flat_sv[mask], axis=0)
+            loudness_mean = float(np.nanmean(mean_pix[mask]))
             colour_mean = np.nanmean(centered[mask], axis=0)
 
         centroids[cid] = OrderedDict([
-            ("Sv_per_channel_dB",
-             [round(float(v), 3) if np.isfinite(v) else None for v in sv_mean_per_chan]),
-            ("loudness_Sv_mean_dB",
+            (f"{V}_per_channel_dB",
+             [round(float(v), 3) if np.isfinite(v) else None for v in mean_per_chan]),
+            (f"loudness_{V}_mean_dB",
              round(loudness_mean, 3) if np.isfinite(loudness_mean) else None),
             ("colour_c_per_channel_dB",
              [round(float(v), 3) if np.isfinite(v) else None for v in colour_mean]),
@@ -312,6 +358,181 @@ def compute_centroids(
         ])
 
     return centroids
+
+
+# ===========================================================================
+# Equations block (self-documenting math)
+# ===========================================================================
+
+def build_equations_block(
+    alpha: float,
+    beta: float,
+    n_channels: int,
+    var_name: str = "Sv",
+) -> "OrderedDict":
+    """Render the equations from the unified-framework proposal as a YAML block.
+
+    *var_name* templates the variable symbol throughout (e.g. "Sv" or
+    "TS") so the equations describe what was actually clustered.
+
+    The block is keyed so a human reader sees, in order:
+        1. the raw multifrequency vector x,
+        2. its decomposition into loudness (mean) and colour (centered),
+        3. the KMeans feature record phi(x) parametrized by (alpha, beta),
+        4. the KMeans objective in terms of those weights,
+        5. the named-preset corners,
+        6. the Hellinger distance used to compare fingerprints.
+
+    Each equation is plain ASCII with light unicode; no LaTeX.
+    """
+    V = var_name                       # e.g. "Sv" or "TS"
+    Vmean = f"{V}_mean"                # e.g. "Sv_mean" or "TS_mean"
+
+    # For the "this run" form, drop trivial *1 multipliers so it reads cleanly
+    def _coef(v):
+        if not np.isfinite(v):
+            return None
+        if v == 1:
+            return ""
+        if v == 0:
+            return "0*"
+        return f"{v:g}*"
+
+    a_coef = _coef(alpha)
+    b_coef = _coef(beta)
+    N = n_channels if n_channels else "N"
+
+    # Pretty-print the (alpha, beta) substituted form of phi(x)
+    if a_coef is None or b_coef is None:
+        phi_substituted = (
+            f"phi(x) = ( alpha*c_1, ..., alpha*c_N, beta*{Vmean} )  "
+            f"[alpha,beta unknown]"
+        )
+    elif alpha == 0:
+        phi_substituted = (
+            f"phi(x) = ( {b_coef}{Vmean} )    "
+            f"[colour block dropped: alpha=0]"
+        )
+    elif beta == 0:
+        phi_substituted = (
+            f"phi(x) = ( {a_coef}c_1, {a_coef}c_2, ..., {a_coef}c_{N} )    "
+            f"[loudness dropped: beta=0]"
+        )
+    else:
+        phi_substituted = (
+            f"phi(x) = ( {a_coef}c_1, {a_coef}c_2, ..., {a_coef}c_{N}, "
+            f"{b_coef}{Vmean} )"
+        )
+
+    # KMeans objective written on a single line so YAML doesn't fold it
+    kmeans_obj = (
+        f"||phi(x) - mu||^2 = "
+        f"alpha^2 * sum_i (c_i - mu_i^c)^2 + "
+        f"beta^2 * ({Vmean} - mu^mean)^2"
+    )
+
+    eqs = OrderedDict()
+
+    eqs["reference"] = (
+        "Ryan, M.C. (2026). Proposal: An Unsupervised Companion to the "
+        "Acoustic Feature Library.  Sections 3.1, 3.3, 3.4."
+    )
+
+    eqs["acoustic_variable"] = V
+
+    eqs["1_raw_vector"] = OrderedDict([
+        ("formula", f"x = ( {V}(f_1), {V}(f_2), ..., {V}(f_N) )"),
+        ("meaning",
+         f"Per-pixel multifrequency {V} vector.  N is the number of "
+         f"channels selected for clustering."),
+    ])
+
+    eqs["2_loudness_colour_decomposition"] = OrderedDict([
+        ("loudness", OrderedDict([
+            ("formula", f"{Vmean} = (1/N) * sum_{{i=1..N}} {V}(f_i)"),
+            ("meaning",
+             f"Common-mode component.  One scalar per pixel.  See "
+             f"acoustic_variable.loudness_meaning for the biological "
+             f"interpretation specific to {V}."),
+        ])),
+        ("colour", OrderedDict([
+            ("formula", f"c_i = {V}(f_i) - {Vmean},    i = 1..N"),
+            ("meaning",
+             f"Inter-frequency contrast vector.  N entries per pixel "
+             f"with sum_i c_i = 0, so N-1 independent degrees of "
+             f"freedom.  Mathematically equivalent (up to a choice of "
+             f"reference) to the relative frequency response R(f) used "
+             f"in the Korneliussen lineage; additive contamination in "
+             f"dB cancels.  See acoustic_variable.colour_meaning for "
+             f"the biological interpretation specific to {V}."),
+        ])),
+        ("invertibility", OrderedDict([
+            ("note",
+             f"(c_1, ..., c_N, {Vmean}) is a full-rank linear transform "
+             f"of ({V}_1, ..., {V}_N).  No information is gained or "
+             f"lost by the decomposition; only the geometry seen by "
+             f"KMeans changes when the two subspaces are reweighted."),
+        ])),
+    ])
+
+    eqs["3_feature_construction_phi"] = OrderedDict([
+        ("formula_general",
+         f"phi(x) = ( alpha*c_1, alpha*c_2, ..., alpha*c_N,  beta*{Vmean} )"),
+        ("formula_this_run", phi_substituted),
+        ("alpha_role",
+         f"alpha = {alpha:g}  -- weight on the colour (inter-frequency) block. "
+         f"Scales every c_i identically."),
+        ("beta_role",
+         f"beta  = {beta:g}  -- weight on the loudness scalar {Vmean}."),
+        ("meaning",
+         "The single record fed to KMeans per pixel.  Up to N+1 "
+         "entries: N from the colour block, plus one loudness entry. "
+         "When alpha=0 the colour block drops out; when beta=0 the "
+         "loudness entry drops out."),
+    ])
+
+    eqs["4_kmeans_objective"] = OrderedDict([
+        ("formula", kmeans_obj),
+        ("ratio_invariance",
+         "Only the ratio beta/alpha affects the partition.  KMeans is "
+         "invariant to a global metric scale, so (alpha, beta) and "
+         "(k*alpha, k*beta) for any k>0 produce identical clusterings. "
+         "Recommended workflow: fix alpha=1, sweep beta."),
+        ("this_run_ratio",
+         f"beta/alpha = {(beta/alpha) if alpha > 0 else float('inf'):g}"),
+    ])
+
+    eqs["5_named_presets"] = OrderedDict([
+        ("direct",   "(alpha, beta) = (1, 1)  -> information-equivalent to raw vector"),
+        ("contrast", "(alpha, beta) = (1, 0)  -> colour-only; pure inter-frequency relations"),
+        ("loudness", "(alpha, beta) = (0, 1)  -> mean-only; inter-frequency relations discarded"),
+    ])
+
+    eqs["6_region_fingerprint"] = OrderedDict([
+        ("formula",
+         "p(R) = ( p_1, ..., p_k ),    "
+         "p_j = #{pixels in R with cluster label j} / #{pixels in R}"),
+        ("meaning",
+         "Region-level descriptor: the share of each cluster within "
+         "the ROI.  Lies on the simplex Delta^{k-1} (entries non-"
+         "negative, sum to 1).  For a monospecific aggregation, p(R) "
+         "concentrates near a vertex; for a mixed aggregation, mass "
+         "distributes across multiple entries.  Note: 'pixels' here "
+         "means whatever pixel_population is defined for this "
+         "acoustic variable (see acoustic_variable block)."),
+    ])
+
+    eqs["7_hellinger_distance"] = OrderedDict([
+        ("formula",
+         "dH(p, q) = (1 / sqrt(2)) * || sqrt(p) - sqrt(q) ||_2"),
+        ("meaning",
+         "Natural metric on the probability simplex; well-behaved at "
+         "zero entries (unlike KL divergence).  Used to compare two "
+         "fingerprints and to cluster fingerprints into a data-driven "
+         "taxonomy (proposal Sec. 3.4)."),
+    ])
+
+    return eqs
 
 
 # ===========================================================================
@@ -465,11 +686,12 @@ def build_report(
                         ("source_file", str(source_sv_path.resolve())),
                         ("source_variable", sv_var),
                         ("description",
-                         "Per-cluster mean Sv (raw, dB), loudness "
-                         "(Sv_mean, dB), and colour (c_i = Sv_i - Sv_mean, "
-                         "dB) over pixels assigned to each cluster within "
-                         "the ROI.  These make cluster ids interpretable "
-                         "across runs."),
+                         f"Per-cluster mean {sv_var} (raw, dB), loudness "
+                         f"({sv_var}_mean, dB), and colour (c_i = "
+                         f"{sv_var}_i - {sv_var}_mean, dB) over pixels "
+                         f"assigned to each cluster within the ROI. "
+                         f"These make cluster ids interpretable across "
+                         f"runs."),
                         ("by_cluster", centroids),
                     ])
             except Exception as e:
@@ -498,13 +720,42 @@ def build_report(
     ])
 
     # ------------------------------------------------------------------
+    # Acoustic variable descriptor (NEW: the scientific identity block)
+    # ------------------------------------------------------------------
+    var_desc = read_variable_descriptor(attrs)
+    var_name = var_desc.get("name", "Sv")
+
+    acoustic_variable = OrderedDict([
+        ("name", var_name),
+        ("long_name", var_desc.get("long_name", "")),
+        ("units", var_desc.get("units", "")),
+        ("pixel_population", var_desc.get("pixel_population", "")),
+        ("loudness_meaning", var_desc.get("loudness_meaning", "")),
+        ("colour_meaning", var_desc.get("colour_meaning", "")),
+        ("detection_filtered", var_desc["detection_filtered_bool"]),
+        ("notes", var_desc.get("notes", "")),
+    ])
+
+    # ------------------------------------------------------------------
+    # Equations block (self-documenting math, templated by variable)
+    # ------------------------------------------------------------------
+    alpha_val = float(attrs.get("alpha", float("nan")))
+    beta_val  = float(attrs.get("beta",  float("nan")))
+    n_chan_val = len(_parse_channels_attr(attrs.get("channels_used", "")))
+    equations = build_equations_block(
+        alpha_val, beta_val, n_chan_val, var_name=var_name
+    )
+
+    # ------------------------------------------------------------------
     # Assemble
     # ------------------------------------------------------------------
     report = OrderedDict([
         ("aa_report", OrderedDict([
             ("provenance", provenance),
             ("echoclassification", echoclass),
+            ("acoustic_variable", acoustic_variable),
             ("clustering_config", config),
+            ("equations", equations),
             ("region_of_interest", region),
             ("fingerprint", fingerprint),
             ("cluster_centroids", centroids_block),
@@ -541,7 +792,9 @@ def _interpret_alpha_beta(alpha: float, beta: float) -> str:
 SECTION_HEADERS = {
     "provenance":         "# Where this report came from",
     "echoclassification": "# What this fingerprint represents (user-assigned)",
+    "acoustic_variable":  "# What was clustered (Sv, TS, ...) and what it means physically",
     "clustering_config":  "# How the cluster map was produced",
+    "equations":          "# Mathematical definitions (proposal Sec. 3.1, 3.3, 3.4)",
     "region_of_interest": "# Spatial scope of this fingerprint",
     "fingerprint":        "# The cluster-ratio fingerprint p(R) on the simplex",
     "cluster_centroids":  "# Physical interpretation of each cluster id",
