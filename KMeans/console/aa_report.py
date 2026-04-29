@@ -38,7 +38,7 @@ import yaml
 from loguru import logger
 
 
-REPORT_VERSION = "2.2"
+REPORT_VERSION = "2.3"
 
 
 # ===========================================================================
@@ -168,10 +168,10 @@ def print_help():
     The fingerprint shape depends on the source algorithm:
 
       KMeans  -> per-cluster simplex p(R) on Delta^{k-1}
-      HDBSCAN -> sorted size spectrum on Delta^{M-1} (M = 20 by default),
-                 plus persistence-weighted variant when cluster_persistence
+      DBSCAN  -> sorted size spectrum on Delta^{M-1} (M = 20 by default)
+      HDBSCAN -> sorted size spectrum on Delta^{M-1}, plus a
+                 persistence-weighted variant when cluster_persistence
                  is present in the input file
-      DBSCAN  -> per-cluster simplex over discovered clusters (variable k)
 
     In all cases the report carries the (alpha, beta) feature-construction
     metadata, the acoustic-variable descriptor, and (with --source_sv)
@@ -291,7 +291,7 @@ def compute_fingerprint(cluster_data: np.ndarray, n_clusters_hint: Optional[int]
 
 
 # ===========================================================================
-# HDBSCAN fingerprint computation
+# Variable-k fingerprint computation (DBSCAN and HDBSCAN)
 # ===========================================================================
 
 DEFAULT_SPECTRUM_LENGTH = 20
@@ -325,28 +325,32 @@ def _normalize_to_simplex(weights: np.ndarray, length: int) -> list:
     return [0.0] * length
 
 
-def compute_fingerprint_hdbscan(
+def compute_fingerprint_variable_k(
     cluster_data: np.ndarray,
     cluster_persistence: Optional[np.ndarray] = None,
     membership_probability: Optional[np.ndarray] = None,
     outlier_score: Optional[np.ndarray] = None,
     spectrum_length: int = DEFAULT_SPECTRUM_LENGTH,
 ) -> Dict[str, Any]:
-    """Compute a layered HDBSCAN fingerprint over a cluster_map ROI.
+    """Compute a layered fingerprint for variable-k clustering output.
 
-    Because HDBSCAN's k varies run-to-run, the per-cluster simplex used
-    for KMeans is not a stable embedding.  This function emits two
-    fixed-dimensional descriptors instead:
+    Used for both DBSCAN and HDBSCAN.  Both algorithms share the
+    "k varies between runs and cluster ids do not correspond across
+    runs" problem that breaks the per-cluster simplex used by KMeans.
+    HDBSCAN additionally provides per-cluster persistence and per-pixel
+    membership/outlier scores; when those are supplied this function
+    emits the persistence-weighted spectrum and richer diagnostics.
+    For DBSCAN they are simply omitted.
 
     Tier 1 — Sorted size spectrum
         Cluster fractions of valid (non-noise) pixels, sorted descending,
         padded with zeros to ``spectrum_length``.  Lies on the simplex
         Delta^{spectrum_length-1} and is Hellinger-comparable across
         runs at the same setting.  Two variants are produced:
-            spectrum_by_count        weight = pixel count
-            spectrum_by_persistence  weight = pixel count * cluster persistence
+            spectrum_by_count        weight = pixel count           (always)
+            spectrum_by_persistence  weight = pixel count * persist  (HDBSCAN)
 
-    Tier 3 — HDBSCAN-native diagnostics
+    Tier 3 — Density-clustering diagnostics
         n_clusters, noise fraction, cluster-size and persistence
         percentiles, GLOSH percentiles, fraction of confidently
         assigned pixels.  Not a fingerprint — context the classifier
@@ -361,13 +365,14 @@ def compute_fingerprint_hdbscan(
     cluster_data : np.ndarray
         2-D array of integer cluster labels.  -1 = noise.
     cluster_persistence : np.ndarray or None
-        Stability score per cluster id.  If supplied, enables the
-        persistence-weighted spectrum and the persistence diagnostics.
+        Stability score per cluster id (HDBSCAN only).  When supplied,
+        enables the persistence-weighted spectrum and the persistence
+        diagnostics block.
     membership_probability : np.ndarray or None
         Per-pixel membership strength in [0, 1] aligned with
-        *cluster_data*.  Used for the confidence diagnostic.
+        *cluster_data* (HDBSCAN only).
     outlier_score : np.ndarray or None
-        Per-pixel GLOSH score aligned with *cluster_data*.
+        Per-pixel GLOSH score aligned with *cluster_data* (HDBSCAN only).
     spectrum_length : int
         Length of the sorted size spectrum (default 20).
 
@@ -375,7 +380,9 @@ def compute_fingerprint_hdbscan(
     -------
     dict
         Layered fingerprint with sorted spectra, per-cluster details,
-        and HDBSCAN diagnostics.
+        and diagnostics.  Keys are stable across DBSCAN and HDBSCAN;
+        HDBSCAN-only fields fall back to a "not present in input"
+        note when called with DBSCAN data.
     """
     flat = cluster_data.ravel()
     total_pixels = int(len(flat))
@@ -758,7 +765,8 @@ def build_equations_block(
          "loudness entry drops out."),
     ])
 
-    if algorithm.upper() == "HDBSCAN":
+    algo_upper = algorithm.upper()
+    if algo_upper == "HDBSCAN":
         eqs["4_hdbscan_density_objective"] = OrderedDict([
             ("description",
              "HDBSCAN does not minimise a closed-form objective.  It "
@@ -782,6 +790,31 @@ def build_equations_block(
             ("this_run_ratio",
              f"beta/alpha = {(beta/alpha) if alpha > 0 else float('inf'):g}"),
         ])
+    elif algo_upper == "DBSCAN":
+        eqs["4_dbscan_density_objective"] = OrderedDict([
+            ("description",
+             "DBSCAN does not minimise a closed-form objective.  It "
+             "groups points whose phi-space neighbourhoods (radius "
+             "eps, minimum population min_samples) overlap into "
+             "density-connected components.  Clusters may differ in "
+             "count and identity from run to run; only the phi-space "
+             "geometry is shared with KMeans."),
+            ("density_rule",
+             "A point p is a core point if at least min_samples points "
+             "lie within distance eps of p.  Core points and their "
+             "eps-neighbours form clusters; non-core points outside "
+             "any eps-neighbourhood are labelled -1 (noise)."),
+            ("noise_label",
+             "Points labelled -1 are excluded from the fingerprint."),
+            ("ratio_invariance",
+             "Only the ratio beta/alpha matters because Euclidean "
+             "distances rescale globally; (alpha, beta) and "
+             "(k*alpha, k*beta) for k>0 produce identical clusterings.  "
+             "Note that eps is in phi-space units, so it must be "
+             "rescaled if alpha or beta change."),
+            ("this_run_ratio",
+             f"beta/alpha = {(beta/alpha) if alpha > 0 else float('inf'):g}"),
+        ])
     else:
         eqs["4_kmeans_objective"] = OrderedDict([
             ("formula", kmeans_obj),
@@ -800,12 +833,13 @@ def build_equations_block(
         ("loudness", "(alpha, beta) = (0, 1)  -> mean-only; inter-frequency relations discarded"),
     ])
 
-    if algorithm.upper() == "HDBSCAN":
-        eqs["6_region_fingerprint"] = OrderedDict([
+    if algo_upper in ("HDBSCAN", "DBSCAN"):
+        section = OrderedDict([
             ("problem",
-             "HDBSCAN's cluster count k varies between runs and cluster "
-             "ids do not correspond across runs, so the per-cluster "
-             "simplex p(R) used for KMeans is not a stable embedding."),
+             f"{algo_upper}'s cluster count k varies between runs and "
+             "cluster ids do not correspond across runs, so the per-"
+             "cluster simplex p(R) used for KMeans is not a stable "
+             "embedding."),
             ("solution_tier1",
              "Sorted size spectrum.  Take the cluster fractions f_1, "
              "..., f_k of valid (non-noise) pixels, sort descending, "
@@ -815,21 +849,26 @@ def build_equations_block(
              "s_count(R) = sort_desc(f_1, ..., f_k) padded to M; "
              "f_j = #{pixels in R with cluster label j} / "
              "#{valid pixels in R}"),
-            ("formula_persistence",
-             "s_pers(R) = sort_desc(f_j * persistence_j) padded to M, "
-             "renormalised.  Down-weights low-stability clusters."),
-            ("noise_handling",
-             "Pixels with label -1 are excluded from the spectrum and "
-             "reported separately as noise_percent.  A high noise "
-             "fraction means the spectrum represents a small subset "
-             "of the ROI and should be interpreted with care."),
-            ("comparability",
-             "Two HDBSCAN spectra at the same M are Hellinger-"
-             "comparable, but two clusters at the same rank in two "
-             "different runs are not guaranteed to be the same "
-             "cluster.  For semantic comparability across runs use a "
-             "shared phi-space codebook (see Tier 2, downstream)."),
         ])
+        if algo_upper == "HDBSCAN":
+            section["formula_persistence"] = (
+                "s_pers(R) = sort_desc(f_j * persistence_j) padded to M, "
+                "renormalised.  Down-weights low-stability clusters."
+            )
+        section["noise_handling"] = (
+            "Pixels with label -1 are excluded from the spectrum and "
+            "reported separately as noise_percent.  A high noise "
+            "fraction means the spectrum represents a small subset "
+            "of the ROI and should be interpreted with care."
+        )
+        section["comparability"] = (
+            "Two spectra at the same M are Hellinger-comparable, but "
+            "two clusters at the same rank in two different runs are "
+            "not guaranteed to be the same cluster.  For semantic "
+            "comparability across runs use a shared phi-space "
+            "codebook (see Tier 2, downstream)."
+        )
+        eqs["6_region_fingerprint"] = section
     else:
         eqs["6_region_fingerprint"] = OrderedDict([
             ("formula",
@@ -993,10 +1032,13 @@ def build_report(
     # ------------------------------------------------------------------
     # Fingerprint
     # ------------------------------------------------------------------
-    if is_hdbscan:
-        # Pull HDBSCAN sidecar variables when present in the dataset.
-        # cluster_persistence is indexed by cluster_id, not by the spatial
-        # grid, so it isn't sliced by the ROI.
+    if is_density:
+        # DBSCAN and HDBSCAN both have variable k and use the sorted-
+        # spectrum fingerprint.  HDBSCAN additionally provides per-
+        # cluster persistence and per-pixel membership / GLOSH scores;
+        # DBSCAN simply has none of those, so the optional inputs to
+        # compute_fingerprint_variable_k stay None and the report
+        # records that fact in its diagnostics block.
         persistence_arr = (
             ds["cluster_persistence"].values
             if "cluster_persistence" in ds
@@ -1023,14 +1065,14 @@ def build_report(
         except Exception:
             glosh_arr = None
 
-        fingerprint = compute_fingerprint_hdbscan(
+        fingerprint = compute_fingerprint_variable_k(
             cluster_roi,
             cluster_persistence=persistence_arr,
             membership_probability=prob_arr,
             outlier_score=glosh_arr,
         )
     else:
-        n_hint = int(attrs.get("n_clusters", 0)) if not is_density else None
+        n_hint = int(attrs.get("n_clusters", 0))
         fingerprint = compute_fingerprint(cluster_roi, n_clusters_hint=n_hint)
 
     # ------------------------------------------------------------------
@@ -1089,21 +1131,36 @@ def build_report(
     # ------------------------------------------------------------------
     # Comparability hint (so a downstream Hellinger tool knows the rules)
     # ------------------------------------------------------------------
-    if is_hdbscan:
+    if is_density:
+        if is_hdbscan:
+            compat_note = (
+                "HDBSCAN sorted-spectrum fingerprints at the same "
+                "spectrum_length, alpha/beta, channels, and HDBSCAN "
+                "parameters.  WARNING: same-rank entries across runs "
+                "are not guaranteed to represent the same physical "
+                "cluster — use the codebook-projected fingerprint "
+                "(Tier 2, downstream) for semantic comparability."
+            )
+            recommended_input = (
+                "spectrum_by_persistence when available; "
+                "spectrum_by_count otherwise"
+            )
+        else:
+            compat_note = (
+                "DBSCAN sorted-spectrum fingerprints at the same "
+                "spectrum_length, alpha/beta, channels, eps, and "
+                "min_samples.  WARNING: same-rank entries across runs "
+                "are not guaranteed to represent the same physical "
+                "cluster — use the codebook-projected fingerprint "
+                "(Tier 2, downstream) for semantic comparability."
+            )
+            recommended_input = "spectrum_by_count"
         comparability = OrderedDict([
             ("simplex_dimension", fingerprint["spectrum_length"]),
-            ("hellinger_compatible_with",
-             "HDBSCAN sorted-spectrum fingerprints at the same "
-             "spectrum_length, alpha/beta, channels, and HDBSCAN "
-             "parameters.  WARNING: same-rank entries across runs are "
-             "not guaranteed to represent the same physical cluster — "
-             "use the codebook-projected fingerprint (Tier 2, "
-             "downstream) for semantic comparability."),
+            ("hellinger_compatible_with", compat_note),
             ("recommended_distance",
              "dH(p,q) = (1/sqrt(2)) * ||sqrt(p) - sqrt(q)||_2"),
-            ("recommended_input_field",
-             "spectrum_by_persistence when available; "
-             "spectrum_by_count otherwise"),
+            ("recommended_input_field", recommended_input),
         ])
     else:
         comparability = OrderedDict([
