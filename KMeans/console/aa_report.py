@@ -38,7 +38,7 @@ import yaml
 from loguru import logger
 
 
-REPORT_VERSION = "2.1"
+REPORT_VERSION = "2.2"
 
 
 # ===========================================================================
@@ -119,7 +119,8 @@ def print_help():
 
     Arguments:
     INPUT_PATH                  Path to a NetCDF file containing a cluster_map
-                                variable (output of aa-kmeans or aa-dbscan).
+                                variable (output of aa-kmeans, aa-dbscan,
+                                or aa-hdbscan).
                                 Optional. Defaults to stdin if not provided.
 
     Options:
@@ -163,11 +164,19 @@ def print_help():
     --quiet                     Suppress logger info, only print output path.
 
     Description:
-    Reads a cluster_map NetCDF and produces a YAML fingerprint p(R).  The
-    report carries enough metadata that two fingerprints from the same
-    clustering run can be compared by Hellinger distance on the simplex,
-    and enough physical context (centroids in Sv space) that cluster
-    labels remain interpretable across runs.
+    Reads a cluster_map NetCDF and produces a YAML fingerprint report.
+    The fingerprint shape depends on the source algorithm:
+
+      KMeans  -> per-cluster simplex p(R) on Delta^{k-1}
+      HDBSCAN -> sorted size spectrum on Delta^{M-1} (M = 20 by default),
+                 plus persistence-weighted variant when cluster_persistence
+                 is present in the input file
+      DBSCAN  -> per-cluster simplex over discovered clusters (variable k)
+
+    In all cases the report carries the (alpha, beta) feature-construction
+    metadata, the acoustic-variable descriptor, and (with --source_sv)
+    physical centroids in raw / colour / loudness coordinates so labels
+    remain interpretable across runs.
 
     Examples:
       # Whole-grid fingerprint, no centroids
@@ -282,6 +291,255 @@ def compute_fingerprint(cluster_data: np.ndarray, n_clusters_hint: Optional[int]
 
 
 # ===========================================================================
+# HDBSCAN fingerprint computation
+# ===========================================================================
+
+DEFAULT_SPECTRUM_LENGTH = 20
+
+
+def _percentiles(arr: np.ndarray, ps=(10, 25, 50, 75, 90)) -> "OrderedDict":
+    """Compute named percentiles, returning a clean OrderedDict for YAML."""
+    out = OrderedDict()
+    if arr.size == 0:
+        for p in ps:
+            out[f"p{p}"] = None
+        return out
+    vals = np.percentile(arr, ps)
+    for p, v in zip(ps, vals):
+        out[f"p{p}"] = float(v) if np.isfinite(v) else None
+    return out
+
+
+def _normalize_to_simplex(weights: np.ndarray, length: int) -> list:
+    """Sort weights descending, pad/truncate to *length*, normalize to sum 1."""
+    sorted_w = np.sort(weights)[::-1]
+    if sorted_w.size < length:
+        sorted_w = np.concatenate(
+            [sorted_w, np.zeros(length - sorted_w.size, dtype=float)]
+        )
+    else:
+        sorted_w = sorted_w[:length]
+    total = float(sorted_w.sum())
+    if total > 0:
+        return [round(float(x / total), 6) for x in sorted_w]
+    return [0.0] * length
+
+
+def compute_fingerprint_hdbscan(
+    cluster_data: np.ndarray,
+    cluster_persistence: Optional[np.ndarray] = None,
+    membership_probability: Optional[np.ndarray] = None,
+    outlier_score: Optional[np.ndarray] = None,
+    spectrum_length: int = DEFAULT_SPECTRUM_LENGTH,
+) -> Dict[str, Any]:
+    """Compute a layered HDBSCAN fingerprint over a cluster_map ROI.
+
+    Because HDBSCAN's k varies run-to-run, the per-cluster simplex used
+    for KMeans is not a stable embedding.  This function emits two
+    fixed-dimensional descriptors instead:
+
+    Tier 1 — Sorted size spectrum
+        Cluster fractions of valid (non-noise) pixels, sorted descending,
+        padded with zeros to ``spectrum_length``.  Lies on the simplex
+        Delta^{spectrum_length-1} and is Hellinger-comparable across
+        runs at the same setting.  Two variants are produced:
+            spectrum_by_count        weight = pixel count
+            spectrum_by_persistence  weight = pixel count * cluster persistence
+
+    Tier 3 — HDBSCAN-native diagnostics
+        n_clusters, noise fraction, cluster-size and persistence
+        percentiles, GLOSH percentiles, fraction of confidently
+        assigned pixels.  Not a fingerprint — context the classifier
+        needs to decide whether to trust Tier 1.
+
+    (Tier 2, codebook projection, requires an external codebook and is
+    expected to be added by a downstream tool that consumes both this
+    report and the codebook YAML.)
+
+    Parameters
+    ----------
+    cluster_data : np.ndarray
+        2-D array of integer cluster labels.  -1 = noise.
+    cluster_persistence : np.ndarray or None
+        Stability score per cluster id.  If supplied, enables the
+        persistence-weighted spectrum and the persistence diagnostics.
+    membership_probability : np.ndarray or None
+        Per-pixel membership strength in [0, 1] aligned with
+        *cluster_data*.  Used for the confidence diagnostic.
+    outlier_score : np.ndarray or None
+        Per-pixel GLOSH score aligned with *cluster_data*.
+    spectrum_length : int
+        Length of the sorted size spectrum (default 20).
+
+    Returns
+    -------
+    dict
+        Layered fingerprint with sorted spectra, per-cluster details,
+        and HDBSCAN diagnostics.
+    """
+    flat = cluster_data.ravel()
+    total_pixels = int(len(flat))
+    nan_mask = np.isnan(flat.astype(float))
+
+    labels = flat.copy()
+    labels[nan_mask] = -1
+    labels = labels.astype(int)
+
+    valid_mask = labels >= 0
+    valid_pixels = int(valid_mask.sum())
+    noise_pixels = total_pixels - valid_pixels
+
+    present = sorted(int(u) for u in np.unique(labels[valid_mask])) if valid_pixels else []
+    counts = np.array(
+        [int(np.sum(labels == cid)) for cid in present], dtype=float
+    )
+
+    # Persistence aligned to the *present* cluster ids
+    persistence_aligned = None
+    if cluster_persistence is not None and len(cluster_persistence) > 0:
+        cp = np.asarray(cluster_persistence, dtype=float)
+        persistence_aligned = np.array([
+            float(cp[cid]) if 0 <= cid < len(cp) else float("nan")
+            for cid in present
+        ])
+
+    # ----------------------------------------------------------------------
+    # Tier 1 — sorted size spectrum (count-based)
+    # ----------------------------------------------------------------------
+    if valid_pixels > 0 and counts.size > 0:
+        fractions = counts / valid_pixels
+        spectrum_by_count = _normalize_to_simplex(fractions, spectrum_length)
+    else:
+        spectrum_by_count = [0.0] * spectrum_length
+
+    # Tier 1 — sorted size spectrum (persistence-weighted)
+    if (
+        valid_pixels > 0
+        and counts.size > 0
+        and persistence_aligned is not None
+        and np.isfinite(persistence_aligned).any()
+    ):
+        weights = counts * np.where(
+            np.isfinite(persistence_aligned), persistence_aligned, 0.0
+        )
+        spectrum_by_persistence = _normalize_to_simplex(weights, spectrum_length)
+        spectrum_by_persistence_available = True
+    else:
+        spectrum_by_persistence = [0.0] * spectrum_length
+        spectrum_by_persistence_available = False
+
+    # ----------------------------------------------------------------------
+    # Per-cluster details
+    # ----------------------------------------------------------------------
+    per_cluster = OrderedDict()
+    for i, cid in enumerate(present):
+        c = int(counts[i])
+        entry = OrderedDict([
+            ("pixel_count", c),
+            ("ratio", round(c / valid_pixels, 6) if valid_pixels else 0.0),
+            ("percent", round(100.0 * c / valid_pixels, 3) if valid_pixels else 0.0),
+        ])
+        if persistence_aligned is not None:
+            p = persistence_aligned[i]
+            entry["persistence"] = (
+                round(float(p), 6) if np.isfinite(p) else None
+            )
+        per_cluster[cid] = entry
+
+    if valid_pixels and per_cluster:
+        dominant_id = max(per_cluster, key=lambda k: per_cluster[k]["pixel_count"])
+        dominant_pct = per_cluster[dominant_id]["percent"]
+    else:
+        dominant_id = None
+        dominant_pct = 0.0
+
+    # ----------------------------------------------------------------------
+    # Tier 3 — HDBSCAN-native diagnostics
+    # ----------------------------------------------------------------------
+    diagnostics = OrderedDict()
+    diagnostics["n_clusters_discovered"] = len(present)
+    diagnostics["noise_percent"] = (
+        round(100.0 * noise_pixels / total_pixels, 3) if total_pixels else 0.0
+    )
+    diagnostics["valid_percent"] = (
+        round(100.0 * valid_pixels / total_pixels, 3) if total_pixels else 0.0
+    )
+
+    if counts.size > 0:
+        diagnostics["cluster_size_percentiles"] = _percentiles(counts)
+        diagnostics["largest_cluster_share"] = round(
+            float(counts.max() / valid_pixels), 6
+        ) if valid_pixels else 0.0
+    else:
+        diagnostics["cluster_size_percentiles"] = _percentiles(np.array([]))
+        diagnostics["largest_cluster_share"] = 0.0
+
+    if persistence_aligned is not None and persistence_aligned.size > 0:
+        finite = persistence_aligned[np.isfinite(persistence_aligned)]
+        diagnostics["persistence"] = OrderedDict([
+            ("mean", round(float(finite.mean()), 6) if finite.size else None),
+            ("median", round(float(np.median(finite)), 6) if finite.size else None),
+            ("min", round(float(finite.min()), 6) if finite.size else None),
+            ("max", round(float(finite.max()), 6) if finite.size else None),
+            ("n_above_0p25", int((finite >= 0.25).sum())),
+            ("n_above_0p50", int((finite >= 0.50).sum())),
+        ])
+    else:
+        diagnostics["persistence"] = OrderedDict([
+            ("note", "cluster_persistence variable not present in input"),
+        ])
+
+    if outlier_score is not None:
+        glosh_flat = np.asarray(outlier_score).ravel()
+        glosh_valid = glosh_flat[np.isfinite(glosh_flat)]
+        diagnostics["outlier_score_percentiles"] = _percentiles(glosh_valid)
+    else:
+        diagnostics["outlier_score_percentiles"] = OrderedDict([
+            ("note", "outlier_score variable not present in input"),
+        ])
+
+    if membership_probability is not None:
+        prob_flat = np.asarray(membership_probability).ravel()
+        prob_valid = prob_flat[valid_mask]
+        if prob_valid.size > 0:
+            diagnostics["membership_probability"] = OrderedDict([
+                ("mean", round(float(prob_valid.mean()), 6)),
+                ("fraction_above_0p5",
+                 round(float((prob_valid > 0.5).sum() / prob_valid.size), 6)),
+                ("fraction_above_0p8",
+                 round(float((prob_valid > 0.8).sum() / prob_valid.size), 6)),
+            ])
+        else:
+            diagnostics["membership_probability"] = OrderedDict([
+                ("note", "no valid (non-noise) pixels to score"),
+            ])
+    else:
+        diagnostics["membership_probability"] = OrderedDict([
+            ("note", "membership_probability variable not present in input"),
+        ])
+
+    # ----------------------------------------------------------------------
+    # Assemble
+    # ----------------------------------------------------------------------
+    return OrderedDict([
+        ("spectrum_by_count", spectrum_by_count),
+        ("spectrum_by_persistence", spectrum_by_persistence),
+        ("spectrum_by_persistence_available", spectrum_by_persistence_available),
+        ("spectrum_length", spectrum_length),
+        ("dominant_cluster", dominant_id),
+        ("dominant_percent", dominant_pct),
+        ("n_clusters_present", len(present)),
+        ("total_pixels", total_pixels),
+        ("valid_pixels", valid_pixels),
+        ("noise_pixels", noise_pixels),
+        ("noise_percent",
+         round(100.0 * noise_pixels / total_pixels, 3) if total_pixels else 0.0),
+        ("per_cluster", per_cluster),
+        ("diagnostics", diagnostics),
+    ])
+
+
+# ===========================================================================
 # Centroid recovery from source Sv
 # ===========================================================================
 
@@ -369,19 +627,28 @@ def build_equations_block(
     beta: float,
     n_channels: int,
     var_name: str = "Sv",
+    algorithm: str = "KMeans",
 ) -> "OrderedDict":
     """Render the equations from the unified-framework proposal as a YAML block.
 
     *var_name* templates the variable symbol throughout (e.g. "Sv" or
     "TS") so the equations describe what was actually clustered.
 
+    *algorithm* selects which algorithm-specific sections (4 and 6) are
+    rendered:
+        "KMeans"  -> KMeans objective + per-cluster simplex fingerprint
+        "HDBSCAN" -> HDBSCAN density / persistence + sorted size spectrum
+    Shared sections (1-3, 5, 7) are identical across algorithms because
+    the (alpha, beta) feature space itself is shared.
+
     The block is keyed so a human reader sees, in order:
         1. the raw multifrequency vector x,
         2. its decomposition into loudness (mean) and colour (centered),
-        3. the KMeans feature record phi(x) parametrized by (alpha, beta),
-        4. the KMeans objective in terms of those weights,
+        3. the feature record phi(x) parametrized by (alpha, beta),
+        4. the algorithm objective in terms of those weights,
         5. the named-preset corners,
-        6. the Hellinger distance used to compare fingerprints.
+        6. the region-level fingerprint definition,
+        7. the Hellinger distance used to compare fingerprints.
 
     Each equation is plain ASCII with light unicode; no LaTeX.
     """
@@ -491,16 +758,41 @@ def build_equations_block(
          "loudness entry drops out."),
     ])
 
-    eqs["4_kmeans_objective"] = OrderedDict([
-        ("formula", kmeans_obj),
-        ("ratio_invariance",
-         "Only the ratio beta/alpha affects the partition.  KMeans is "
-         "invariant to a global metric scale, so (alpha, beta) and "
-         "(k*alpha, k*beta) for any k>0 produce identical clusterings. "
-         "Recommended workflow: fix alpha=1, sweep beta."),
-        ("this_run_ratio",
-         f"beta/alpha = {(beta/alpha) if alpha > 0 else float('inf'):g}"),
-    ])
+    if algorithm.upper() == "HDBSCAN":
+        eqs["4_hdbscan_density_objective"] = OrderedDict([
+            ("description",
+             "HDBSCAN does not minimise a closed-form objective.  It "
+             "extracts clusters from a hierarchy of density levels "
+             "built on phi-space distances, choosing the most stable "
+             "(persistent) clusters across that hierarchy.  Clusters "
+             "may differ in count and identity from run to run; only "
+             "the underlying phi-space geometry is shared with KMeans."),
+            ("persistence",
+             "persistence(C) = sum over points p in C of "
+             "(1/lambda_p^birth - 1/lambda_p^death), where lambda is "
+             "the density level at which p enters/leaves C.  Higher "
+             "persistence = a more stable cluster."),
+            ("noise_label",
+             "Points that never join a stable cluster are labelled -1 "
+             "(noise) and are excluded from the fingerprint."),
+            ("ratio_invariance",
+             "As with KMeans, only the ratio beta/alpha matters because "
+             "Euclidean distances rescale globally; (alpha, beta) and "
+             "(k*alpha, k*beta) for k>0 produce identical clusterings."),
+            ("this_run_ratio",
+             f"beta/alpha = {(beta/alpha) if alpha > 0 else float('inf'):g}"),
+        ])
+    else:
+        eqs["4_kmeans_objective"] = OrderedDict([
+            ("formula", kmeans_obj),
+            ("ratio_invariance",
+             "Only the ratio beta/alpha affects the partition.  KMeans is "
+             "invariant to a global metric scale, so (alpha, beta) and "
+             "(k*alpha, k*beta) for any k>0 produce identical clusterings. "
+             "Recommended workflow: fix alpha=1, sweep beta."),
+            ("this_run_ratio",
+             f"beta/alpha = {(beta/alpha) if alpha > 0 else float('inf'):g}"),
+        ])
 
     eqs["5_named_presets"] = OrderedDict([
         ("direct",   "(alpha, beta) = (1, 1)  -> information-equivalent to raw vector"),
@@ -508,19 +800,50 @@ def build_equations_block(
         ("loudness", "(alpha, beta) = (0, 1)  -> mean-only; inter-frequency relations discarded"),
     ])
 
-    eqs["6_region_fingerprint"] = OrderedDict([
-        ("formula",
-         "p(R) = ( p_1, ..., p_k ),    "
-         "p_j = #{pixels in R with cluster label j} / #{pixels in R}"),
-        ("meaning",
-         "Region-level descriptor: the share of each cluster within "
-         "the ROI.  Lies on the simplex Delta^{k-1} (entries non-"
-         "negative, sum to 1).  For a monospecific aggregation, p(R) "
-         "concentrates near a vertex; for a mixed aggregation, mass "
-         "distributes across multiple entries.  Note: 'pixels' here "
-         "means whatever pixel_population is defined for this "
-         "acoustic variable (see acoustic_variable block)."),
-    ])
+    if algorithm.upper() == "HDBSCAN":
+        eqs["6_region_fingerprint"] = OrderedDict([
+            ("problem",
+             "HDBSCAN's cluster count k varies between runs and cluster "
+             "ids do not correspond across runs, so the per-cluster "
+             "simplex p(R) used for KMeans is not a stable embedding."),
+            ("solution_tier1",
+             "Sorted size spectrum.  Take the cluster fractions f_1, "
+             "..., f_k of valid (non-noise) pixels, sort descending, "
+             "pad with zeros to fixed length M, and renormalise.  The "
+             "result lies on Delta^{M-1} regardless of k."),
+            ("formula_count",
+             "s_count(R) = sort_desc(f_1, ..., f_k) padded to M; "
+             "f_j = #{pixels in R with cluster label j} / "
+             "#{valid pixels in R}"),
+            ("formula_persistence",
+             "s_pers(R) = sort_desc(f_j * persistence_j) padded to M, "
+             "renormalised.  Down-weights low-stability clusters."),
+            ("noise_handling",
+             "Pixels with label -1 are excluded from the spectrum and "
+             "reported separately as noise_percent.  A high noise "
+             "fraction means the spectrum represents a small subset "
+             "of the ROI and should be interpreted with care."),
+            ("comparability",
+             "Two HDBSCAN spectra at the same M are Hellinger-"
+             "comparable, but two clusters at the same rank in two "
+             "different runs are not guaranteed to be the same "
+             "cluster.  For semantic comparability across runs use a "
+             "shared phi-space codebook (see Tier 2, downstream)."),
+        ])
+    else:
+        eqs["6_region_fingerprint"] = OrderedDict([
+            ("formula",
+             "p(R) = ( p_1, ..., p_k ),    "
+             "p_j = #{pixels in R with cluster label j} / #{pixels in R}"),
+            ("meaning",
+             "Region-level descriptor: the share of each cluster within "
+             "the ROI.  Lies on the simplex Delta^{k-1} (entries non-"
+             "negative, sum to 1).  For a monospecific aggregation, p(R) "
+             "concentrates near a vertex; for a mixed aggregation, mass "
+             "distributes across multiple entries.  Note: 'pixels' here "
+             "means whatever pixel_population is defined for this "
+             "acoustic variable (see acoustic_variable block)."),
+        ])
 
     eqs["7_hellinger_distance"] = OrderedDict([
         ("formula",
@@ -598,16 +921,35 @@ def build_report(
     # ------------------------------------------------------------------
     # Clustering configuration (the "what produced this map" block)
     # ------------------------------------------------------------------
-    is_dbscan = attrs.get("algorithm", "") == "DBSCAN"
+    algo = str(attrs.get("algorithm", "KMeans")).upper()
+    if algo not in ("KMEANS", "DBSCAN", "HDBSCAN"):
+        algo = "KMEANS"
+    is_dbscan = algo == "DBSCAN"
+    is_hdbscan = algo == "HDBSCAN"
+    is_density = is_dbscan or is_hdbscan
 
     config = OrderedDict()
-    config["algorithm"] = "DBSCAN" if is_dbscan else "KMeans"
+    config["algorithm"] = algo if algo == "HDBSCAN" else algo.title()  # HDBSCAN stays uppercase
     config["clustering_variable"] = attrs.get("clustering_variable", "Sv")
 
     if is_dbscan:
         config["eps"] = float(attrs.get("eps", float("nan")))
         config["min_samples"] = int(attrs.get("min_samples", -1))
         config["metric"] = attrs.get("metric", "unknown")
+    elif is_hdbscan:
+        config["min_cluster_size"] = int(attrs.get("min_cluster_size", -1))
+        config["min_samples"] = int(attrs.get("min_samples", -1))
+        config["cluster_selection_method"] = attrs.get(
+            "cluster_selection_method", "eom"
+        )
+        config["cluster_selection_epsilon"] = float(
+            attrs.get("cluster_selection_epsilon", 0.0)
+        )
+        config["metric"] = attrs.get("metric", "unknown")
+        config["n_clusters_discovered"] = int(
+            attrs.get("n_clusters_discovered", -1)
+        )
+        config["n_noise_pixels"] = int(attrs.get("n_noise_pixels", -1))
     else:
         config["n_clusters"] = int(attrs.get("n_clusters", -1))
 
@@ -651,8 +993,45 @@ def build_report(
     # ------------------------------------------------------------------
     # Fingerprint
     # ------------------------------------------------------------------
-    n_hint = int(attrs.get("n_clusters", 0)) if not is_dbscan else None
-    fingerprint = compute_fingerprint(cluster_roi, n_clusters_hint=n_hint)
+    if is_hdbscan:
+        # Pull HDBSCAN sidecar variables when present in the dataset.
+        # cluster_persistence is indexed by cluster_id, not by the spatial
+        # grid, so it isn't sliced by the ROI.
+        persistence_arr = (
+            ds["cluster_persistence"].values
+            if "cluster_persistence" in ds
+            else None
+        )
+        try:
+            prob_arr = (
+                ds["membership_probability"]
+                .isel({ping_dim: slice(p0, p1), range_dim: slice(r0, r1)})
+                .values
+                if "membership_probability" in ds
+                else None
+            )
+        except Exception:
+            prob_arr = None
+        try:
+            glosh_arr = (
+                ds["outlier_score"]
+                .isel({ping_dim: slice(p0, p1), range_dim: slice(r0, r1)})
+                .values
+                if "outlier_score" in ds
+                else None
+            )
+        except Exception:
+            glosh_arr = None
+
+        fingerprint = compute_fingerprint_hdbscan(
+            cluster_roi,
+            cluster_persistence=persistence_arr,
+            membership_probability=prob_arr,
+            outlier_score=glosh_arr,
+        )
+    else:
+        n_hint = int(attrs.get("n_clusters", 0)) if not is_density else None
+        fingerprint = compute_fingerprint(cluster_roi, n_clusters_hint=n_hint)
 
     # ------------------------------------------------------------------
     # Centroids (optional, requires source Sv)
@@ -710,14 +1089,31 @@ def build_report(
     # ------------------------------------------------------------------
     # Comparability hint (so a downstream Hellinger tool knows the rules)
     # ------------------------------------------------------------------
-    comparability = OrderedDict([
-        ("simplex_dimension", fingerprint["n_clusters_basis"]),
-        ("hellinger_compatible_with",
-         "fingerprints from the same clustering run "
-         "(same source file, same alpha/beta, same k, same channels)"),
-        ("recommended_distance",
-         "dH(p,q) = (1/sqrt(2)) * ||sqrt(p) - sqrt(q)||_2"),
-    ])
+    if is_hdbscan:
+        comparability = OrderedDict([
+            ("simplex_dimension", fingerprint["spectrum_length"]),
+            ("hellinger_compatible_with",
+             "HDBSCAN sorted-spectrum fingerprints at the same "
+             "spectrum_length, alpha/beta, channels, and HDBSCAN "
+             "parameters.  WARNING: same-rank entries across runs are "
+             "not guaranteed to represent the same physical cluster — "
+             "use the codebook-projected fingerprint (Tier 2, "
+             "downstream) for semantic comparability."),
+            ("recommended_distance",
+             "dH(p,q) = (1/sqrt(2)) * ||sqrt(p) - sqrt(q)||_2"),
+            ("recommended_input_field",
+             "spectrum_by_persistence when available; "
+             "spectrum_by_count otherwise"),
+        ])
+    else:
+        comparability = OrderedDict([
+            ("simplex_dimension", fingerprint["n_clusters_basis"]),
+            ("hellinger_compatible_with",
+             "fingerprints from the same clustering run "
+             "(same source file, same alpha/beta, same k, same channels)"),
+            ("recommended_distance",
+             "dH(p,q) = (1/sqrt(2)) * ||sqrt(p) - sqrt(q)||_2"),
+        ])
 
     # ------------------------------------------------------------------
     # Acoustic variable descriptor (NEW: the scientific identity block)
@@ -743,7 +1139,7 @@ def build_report(
     beta_val  = float(attrs.get("beta",  float("nan")))
     n_chan_val = len(_parse_channels_attr(attrs.get("channels_used", "")))
     equations = build_equations_block(
-        alpha_val, beta_val, n_chan_val, var_name=var_name
+        alpha_val, beta_val, n_chan_val, var_name=var_name, algorithm=algo
     )
 
     # ------------------------------------------------------------------
