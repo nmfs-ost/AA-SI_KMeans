@@ -233,7 +233,7 @@ A modern echosounder pings the water column at $N$ frequencies — for example $
 Pin a single cell at coordinates $(\text{ping}, \text{range})$ and stack its $N$ channel values into a vector:
 
 $$
-\mathbf{x}\;=\;\big(S_{v,1},\,S_{v,2},\,\ldots,\,S_{v,N}\big)\;\in\;\mathbb{R}^N.
+\mathbf{x} = \big(S_{v,1},\,S_{v,2},\,\ldots,\,S_{v,N}\big) \in \mathbb{R}^N.
 $$
 
 That vector $\mathbf{x}$ is the atomic unit of everything that follows. **One pixel of the echogram is one point in $\mathbb{R}^N$.** Clustering an echogram means partitioning a cloud of $\sim 10^6$–$10^8$ such points.
@@ -261,17 +261,17 @@ Treating them with one undifferentiated Euclidean distance bakes in a *fixed* tr
 Define, for one pixel:
 
 $$
-\boxed{\;\;\bar{S}_v \;=\; \frac{1}{N}\sum_{i=1}^{N} S_{v,i}\qquad\text{(loudness, scalar)}\;\;}
+\boxed{  \bar{S}_v  =  \frac{1}{N}\sum_{i=1}^{N} S_{v,i}\qquad\text{(loudness, scalar)}  }
 $$
 
 $$
-\boxed{\;\;c_i \;=\; S_{v,i} - \bar{S}_v\qquad i = 1,\ldots,N\qquad\text{(colour, vector)}\;\;}
+\boxed{  c_i  =  S_{v,i} - \bar{S}_v\qquad i = 1,\ldots,N\qquad\text{(colour, vector)}  }
 $$
 
 The colour vector $\mathbf{c} = (c_1,\ldots,c_N)$ has a built-in constraint:
 
 $$
-\sum_{i=1}^{N} c_i \;=\; \sum_{i=1}^{N}\big(S_{v,i} - \bar{S}_v\big) \;=\; N\bar{S}_v - N\bar{S}_v \;=\; 0.
+\sum_{i=1}^{N} c_i  =  \sum_{i=1}^{N}\big(S_{v,i} - \bar{S}_v\big)  =  N\bar{S}_v - N\bar{S}_v  =  0.
 $$
 
 So $\mathbf{c}$ has only $N - 1$ independent degrees of freedom; it lives in the $(N-1)$-dimensional hyperplane $\{\mathbf{v}\in\mathbb{R}^N : \sum_i v_i = 0\}$.
@@ -279,13 +279,13 @@ So $\mathbf{c}$ has only $N - 1$ independent degrees of freedom; it lives in the
 This is exactly an orthogonal decomposition of $\mathbb{R}^N$ into the all-ones direction and its complement:
 
 $$
-\mathbb{R}^N \;=\; \underbrace{\mathrm{span}(\mathbf{1})}_{\text{loudness, 1-D}} \;\oplus\; \underbrace{\mathbf{1}^{\perp}}_{\text{colour, }(N-1)\text{-D}}, \qquad \mathbf{1} = (1,1,\ldots,1).
+\mathbb{R}^N  =  \underbrace{\mathrm{span}(\mathbf{1})}_{\text{loudness, 1-D}}  \oplus  \underbrace{\mathbf{1}^{\perp}}_{\text{colour, }(N-1)\text{-D}}, \qquad \mathbf{1} = (1,1,\ldots,1).
 $$
 
 And we can write $\mathbf{x}$ as the orthogonal sum:
 
 $$
-\mathbf{x} \;=\; \bar{S}_v\,\mathbf{1} \;+\; \mathbf{c}, \qquad \big\langle\bar{S}_v\,\mathbf{1},\;\mathbf{c}\big\rangle \;=\; \bar{S}_v \sum_i c_i \;=\; 0.
+\mathbf{x}  =  \bar{S}_v\,\mathbf{1}  +  \mathbf{c}, \qquad \big\langle\bar{S}_v\,\mathbf{1}, \mathbf{c}\big\rangle  =  \bar{S}_v \sum_i c_i  =  0.
 $$
 
 The two pieces are orthogonal *by construction* — that's not a coincidence to be checked, it's the whole point. It means we can scale them independently without one leaking into the other.
@@ -300,13 +300,13 @@ The two pieces are orthogonal *by construction* — that's not a coincidence to 
 Take $N = 3$ frequencies (38, 120, 200 kHz) and one pixel with
 
 $$
-\mathbf{x} \;=\; \big(S_{v,38},\;S_{v,120},\;S_{v,200}\big) \;=\; (-75,\; -68,\; -71)\;\;\text{dB}.
+\mathbf{x}  =  \big(S_{v,38}, S_{v,120}, S_{v,200}\big)  =  (-75,  -68,  -71)  \text{dB}.
 $$
 
 **Loudness:**
 
 $$
-\bar{S}_v \;=\; \tfrac{1}{3}\big(-75 - 68 - 71\big) \;=\; \tfrac{-214}{3} \;\approx\; -71.33\;\text{dB}.
+\bar{S}_v  =  \tfrac{1}{3}\big(-75 - 68 - 71\big)  =  \tfrac{-214}{3}  \approx  -71.33 \text{dB}.
 $$
 
 **Colour:**
@@ -324,7 +324,7 @@ $$
 Now imagine a *second* pixel, $\mathbf{x}' = (-65, -58, -61)$ dB. It is exactly $10$ dB louder at every frequency. Its loudness is $\bar{S}_v' = -61.33$ — very different from $\bar{S}_v$. But its colour vector is
 
 $$
-\mathbf{c}' = (-3.67,\; +3.33,\; +0.33)
+\mathbf{c}' = (-3.67,  +3.33,  +0.33)
 $$
 
 — **identical to $\mathbf{c}$**. That is the orthogonal decomposition doing its job: a uniform additive offset in dB shifts all of the loudness and **none** of the colour. The colour vector has erased the calibration / range / gain difference and kept only the spectral shape.
@@ -336,7 +336,7 @@ This is the key idea the rest of the library is built around.
 Every clusterer in this repo runs on the same per-pixel record:
 
 $$
-\boxed{\;\;\boldsymbol{\varphi}(\mathbf{x}) \;=\; \big(\,\alpha\,c_1,\; \alpha\,c_2,\; \dots,\; \alpha\,c_N,\; \beta\,\bar{S}_v\,\big) \;\in\; \mathbb{R}^{N+1}\;\;}
+\boxed{  \boldsymbol{\varphi}(\mathbf{x})  =  \big(\,\alpha\,c_1,  \alpha\,c_2,  \dots,  \alpha\,c_N,  \beta\,\bar{S}_v\,\big)  \in  \mathbb{R}^{N+1}  }
 $$
 
 with two non-negative weights $\alpha,\beta \ge 0$, not both zero. $\alpha$ is the weight on **colour**; $\beta$ is the weight on **loudness**. The result is an $(N{+}1)$-dimensional feature vector — $N$ colour components and one loudness component.
@@ -345,18 +345,18 @@ Columns whose weight is exactly zero are dropped before clustering, so the actua
 
 | $(\alpha, \beta)$ | Columns kept | Effective dim | What's being clustered |
 |---|---|---|---|
-| $\alpha > 0,\;\beta = 0$ | $\alpha c_1, \ldots, \alpha c_N$ | $N$ | **colour only** — pure spectral shape |
-| $\alpha = 0,\;\beta > 0$ | $\beta \bar{S}_v$ | 1 | **loudness only** — a scalar per pixel |
-| $\alpha > 0,\;\beta > 0$ | both | $N{+}1$ | **mixed** — colour and loudness with relative weight $\beta/\alpha$ |
+| $\alpha > 0, \beta = 0$ | $\alpha c_1, \ldots, \alpha c_N$ | $N$ | **colour only** — pure spectral shape |
+| $\alpha = 0, \beta > 0$ | $\beta \bar{S}_v$ | 1 | **loudness only** — a scalar per pixel |
+| $\alpha > 0, \beta > 0$ | both | $N{+}1$ | **mixed** — colour and loudness with relative weight $\beta/\alpha$ |
 
 Carrying the worked example forward, the records the clusterer actually sees for our pixel $\mathbf{x} = (-75, -68, -71)$ under each setting are:
 
 | Preset | $(\alpha,\beta)$ | $\boldsymbol{\varphi}(\mathbf{x})$ |
 |---|---|---|
-| `direct`   | $(1,1)$ | $(-3.67,\;+3.33,\;+0.33,\;-71.33)$ |
-| `contrast` | $(1,0)$ | $(-3.67,\;+3.33,\;+0.33)$ |
+| `direct`   | $(1,1)$ | $(-3.67, +3.33, +0.33, -71.33)$ |
+| `contrast` | $(1,0)$ | $(-3.67, +3.33, +0.33)$ |
 | `loudness` | $(0,1)$ | $(-71.33)$ |
-| custom | $(1,\,0.5)$ | $(-3.67,\;+3.33,\;+0.33,\;-35.67)$ |
+| custom | $(1,\,0.5)$ | $(-3.67, +3.33, +0.33, -35.67)$ |
 
 Same pixel. Four different records. Four different clusterings. **All from the same recipe with the dial turned to different positions.**
 
@@ -366,13 +366,13 @@ KMeans minimises a sum of squared Euclidean distances between pixels and centroi
 
 $$
 \big\lVert\boldsymbol{\varphi}(\mathbf{x}) - \boldsymbol{\varphi}(\mathbf{x}')\big\rVert^2
-\;=\; \alpha^2 \sum_{i=1}^{N}\!\big(c_i - c'_i\big)^2 \;+\; \beta^2 \big(\bar{S}_v - \bar{S}'_v\big)^2.
+ =  \alpha^2 \sum_{i=1}^{N}\!\big(c_i - c'_i\big)^2  +  \beta^2 \big(\bar{S}_v - \bar{S}'_v\big)^2.
 $$
 
 Now rescale both weights by an arbitrary $\lambda > 0$:  $(\alpha, \beta) \to (\lambda\alpha,\,\lambda\beta)$. Every pairwise squared distance becomes:
 
 $$
-\lambda^2\alpha^2\sum_i\!(c_i - c'_i)^2 \;+\; \lambda^2\beta^2(\bar{S}_v - \bar{S}'_v)^2 \;=\; \lambda^2 \cdot \big\lVert\boldsymbol{\varphi}(\mathbf{x}) - \boldsymbol{\varphi}(\mathbf{x}')\big\rVert^2.
+\lambda^2\alpha^2\sum_i\!(c_i - c'_i)^2  +  \lambda^2\beta^2(\bar{S}_v - \bar{S}'_v)^2  =  \lambda^2 \cdot \big\lVert\boldsymbol{\varphi}(\mathbf{x}) - \boldsymbol{\varphi}(\mathbf{x}')\big\rVert^2.
 $$
 
 A *constant* multiplier $\lambda^2$ on every distance does not change which pixel is closer to which centroid, so it does not change the partition KMeans converges to. Therefore:
@@ -382,7 +382,7 @@ A *constant* multiplier $\lambda^2$ on every distance does not change which pixe
 Practically, this means: **fix $\alpha = 1$ and sweep $\beta$.** A typical sweep is
 
 $$
-\alpha = 1,\qquad \beta \in \{0,\;0.25,\;0.5,\;1,\;2,\;4\}.
+\alpha = 1,\qquad \beta \in \{0, 0.25, 0.5, 1, 2, 4\}.
 $$
 
 That single one-dimensional sweep contains all three named presets and everything in between. A $\beta = 0.3$ optimum that the named presets could never produce is reachable in one afternoon of compute.
@@ -523,13 +523,13 @@ aa-report <cluster_map.nc> [--tag NAME]
 For a region of interest $R$ and a clustering with $k$ clusters, the **cluster-ratio fingerprint** is:
 
 $$
-p(R) \;=\; \big(p_1, p_2, \dots, p_k\big), \qquad p_j \;=\; \frac{\#\{(\text{ping},\text{range})\in R : \text{label}=j\}}{\#\{(\text{ping},\text{range})\in R : \text{label}\ne -1\}},\qquad \sum_j p_j = 1.
+p(R)  =  \big(p_1, p_2, \dots, p_k\big), \qquad p_j  =  \frac{\#\{(\text{ping},\text{range})\in R : \text{label}=j\}}{\#\{(\text{ping},\text{range})\in R : \text{label}\ne -1\}},\qquad \sum_j p_j = 1.
 $$
 
 So $p(R)$ lives on the standard $(k{-}1)$-simplex $\Delta^{k-1}$. Two fingerprints from the **same clustering run** can be compared via the **Hellinger distance**:
 
 $$
-d_H(p, q) \;=\; \frac{1}{\sqrt{2}}\,\bigg\lVert\sqrt{p} - \sqrt{q}\,\bigg\rVert_2 \;\in\; [0, 1].
+d_H(p, q)  =  \frac{1}{\sqrt{2}}\,\bigg\lVert\sqrt{p} - \sqrt{q}\,\bigg\rVert_2  \in  [0, 1].
 $$
 
 Pass `--source_sv ORIGINAL_Sv.nc` to embed per-cluster centroids in raw / colour / loudness coordinates — without this, cluster IDs are not physically interpretable across runs.
