@@ -233,38 +233,42 @@ def split_loudness_colour(
     channel_indices: List[int],
     var: str = "Sv",
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Decompose multifrequency Sv into (loudness, colour) components.
+    """Decompose a multifrequency dB-domain variable into (loudness, colour).
 
-    For each pixel x = (Sv_1, ..., Sv_N) across the selected channels:
+    For each pixel x = (x_1, ..., x_N) across the selected channels of
+    the chosen acoustic variable:
 
-        Sv_mean = (1/N) * sum_i Sv_i           shape (n_pixels,)
-        c_i     = Sv_i - Sv_mean               shape (n_pixels, N)
+        x_mean = (1/N) * sum_i x_i             shape (n_pixels,)
+        c_i    = x_i - x_mean                  shape (n_pixels, N)
 
     NaN propagation: if *any* selected channel is NaN at a given pixel,
-    both Sv_mean and every c_i at that pixel become NaN, so downstream
-    KMeans masking removes the pixel cleanly.
+    both x_mean and every c_i at that pixel become NaN, so downstream
+    KMeans masking removes the pixel cleanly.  This is also what makes
+    detection-filtered variables (e.g. TS, where most grid cells are
+    NaN) drop out automatically without special-case logic.
 
     Parameters
     ----------
     ds : xr.Dataset
-        Dataset with ``Sv[channel, ping_time, range_sample]``.
+        Dataset with ``<var>[channel, ping_time, range_sample]``.
     channel_indices : list of int
         Channels to include in the decomposition.
     var : str
-        Data variable name (default "Sv").
+        Data variable name (default "Sv").  Any registered
+        AcousticVariable works (Sv, TS, ...).
 
     Returns
     -------
-    sv_mean : np.ndarray, shape (n_pixels,)
+    pixel_mean : np.ndarray, shape (n_pixels,)
         Per-pixel common-mode component (loudness).
     centered : np.ndarray, shape (n_pixels, N)
         Per-pixel, per-channel deviation from the mean (colour).
     """
     arrays = [ds[var].isel(channel=i).values.ravel() for i in channel_indices]
     stacked = np.stack(arrays, axis=1)            # (n_pixels, N)
-    sv_mean = stacked.mean(axis=1)                # NaN propagates
-    centered = stacked - sv_mean[:, None]         # (n_pixels, N)
-    return sv_mean, centered
+    pixel_mean = stacked.mean(axis=1)             # NaN propagates
+    centered = stacked - pixel_mean[:, None]      # (n_pixels, N)
+    return pixel_mean, centered
 
 
 # ---------------------------------------------------------------------------
@@ -282,7 +286,11 @@ def build_feature_matrix(
 
     The record per pixel is
 
-        phi(x) = ( alpha * c_1, ..., alpha * c_N,  beta * Sv_mean )
+        phi(x) = ( alpha * c_1, ..., alpha * c_N,  beta * x_mean )
+
+    where x = (x_1, ..., x_N) is the multifrequency vector of the
+    selected acoustic variable at one pixel, x_mean is its per-pixel
+    mean, and c_i = x_i - x_mean is the centered colour component.
 
     Columns whose weight is exactly zero are omitted (so contrast-only
     drops the mean column, mean-only drops the colour columns).
@@ -290,7 +298,7 @@ def build_feature_matrix(
     Parameters
     ----------
     ds : xr.Dataset
-        Dataset with ``Sv[channel, ping_time, range_sample]``.
+        Dataset with ``<var>[channel, ping_time, range_sample]``.
     alpha : float, default 1.0
         Weight on the colour (centered) component.  Must be >= 0.
     beta : float, default 1.0
@@ -298,7 +306,9 @@ def build_feature_matrix(
     channel_indices : list of int or None
         Channel indices to include (default: all).
     var : str
-        Data variable name.
+        Data variable name.  Any registered AcousticVariable works
+        (Sv, TS, ...); the math is identical, only the column labels
+        and downstream metadata change.
 
     Returns
     -------
@@ -321,7 +331,7 @@ def build_feature_matrix(
             f"got {len(indices)}."
         )
 
-    sv_mean, centered = split_loudness_colour(ds, indices, var=var)
+    pixel_mean, centered = split_loudness_colour(ds, indices, var=var)
 
     columns: Dict[str, np.ndarray] = {}
     if alpha > 0:
@@ -329,7 +339,7 @@ def build_feature_matrix(
             label = _channel_label(ds, idx)
             columns[f"alpha*c({label})"] = alpha * centered[:, j]
     if beta > 0:
-        columns["beta*Sv_mean"] = beta * sv_mean
+        columns[f"beta*{var}_mean"] = beta * pixel_mean
 
     logger.info(
         f"Built feature matrix  alpha={alpha}  beta={beta}  "
@@ -471,7 +481,8 @@ def cluster_dataset(
     Parameters
     ----------
     ds : xr.Dataset
-        Sv dataset.
+        Input dataset.  Must contain the variable named by *var*
+        (default "Sv") with a ``channel`` dimension.
     alpha : float, default 1.0
         Weight on colour (centered) component.
     beta : float, default 1.0
