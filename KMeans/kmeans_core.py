@@ -90,6 +90,77 @@ ACOUSTIC_VARIABLES: Dict[str, AcousticVariable] = {
         detection_filtered=False,
         notes="Standard echogram quantity; pixels are dense in (ping, range).",
     ),
+    "Sv_clean": AcousticVariable(
+        name="Sv_clean",
+        long_name="Volume backscattering strength (impulse-noise-cleaned)",
+        units="dB re 1 m^-1",
+        pixel_population=(
+            "Every (ping_time, range_sample) cell in the echogram grid, "
+            "after impulse-noise / spike removal.  Slightly sparser than "
+            "raw Sv where flagged pixels were masked to NaN."
+        ),
+        loudness_meaning="Same as Sv; see the Sv descriptor.",
+        colour_meaning="Same as Sv; see the Sv descriptor.",
+        detection_filtered=False,
+        notes=(
+            "Equivalent to Sv for the (alpha, beta) feature math.  Use this "
+            "when the cleaning stage was actually applied; clusters are "
+            "less polluted by transient noise spikes."
+        ),
+    ),
+    "MVBS": AcousticVariable(
+        name="MVBS",
+        long_name="Mean volume backscattering strength (gridded)",
+        units="dB re 1 m^-1",
+        pixel_population=(
+            "Each cell of a regular (ping_time x range/depth) grid built "
+            "by averaging Sv (linear) over a tile and converting back to dB."
+        ),
+        loudness_meaning=(
+            "Tile-averaged Sv.  Suppresses single-ping noise but loses "
+            "fine spatial structure compared to raw Sv."
+        ),
+        colour_meaning=(
+            "Tile-averaged frequency response.  More stable than the raw "
+            "Sv colour because of the averaging, but also harder to use "
+            "for resolving small scattering structures."
+        ),
+        detection_filtered=False,
+        notes=(
+            "MVBS bin sizes (range, ping) are decided by the upstream "
+            "aa-mvbs run; cluster maps inherit that resolution.  Pick "
+            "bins coarser than the structures you're trying to resolve "
+            "and you'll cluster averages, not the structures themselves."
+        ),
+    ),
+    "NASC": AcousticVariable(
+        name="NASC",
+        long_name="Nautical Area Scattering Coefficient",
+        units="m^2 nmi^-2",
+        pixel_population=(
+            "Vertically-integrated linear scattering per (ping_time, "
+            "range_bin) cell on a gridded echogram."
+        ),
+        loudness_meaning=(
+            "Total integrated backscatter per channel.  Linear units "
+            "(NOT dB), so the (alpha, beta) centering math is biologically "
+            "different here than for Sv/TS/MVBS."
+        ),
+        colour_meaning=(
+            "Per-channel deviation from the mean of NASC values.  "
+            "Because NASC is linear, ratios — not differences — are the "
+            "natural inter-channel comparison; the centered features here "
+            "are mathematically valid but should be interpreted with care."
+        ),
+        detection_filtered=False,
+        notes=(
+            "Unlike Sv, NASC is in linear units.  The (alpha, beta) "
+            "feature construction and Euclidean clustering still run, but "
+            "you may want to cluster on log(NASC) instead for a like-for-"
+            "like comparison with dB-domain runs.  --vmin/--vmax dB "
+            "defaults in the plotters do NOT apply; let them autoscale."
+        ),
+    ),
     "TS": AcousticVariable(
         name="TS",
         long_name="Target strength (single-target)",
@@ -119,6 +190,30 @@ ACOUSTIC_VARIABLES: Dict[str, AcousticVariable] = {
             "statistics depend on the number of detected targets "
             "in the ROI, which is typically far smaller than the "
             "grid-cell count for an Sv fingerprint."
+        ),
+    ),
+    "impulse_mask": AcousticVariable(
+        name="impulse_mask",
+        long_name="Impulse-noise mask",
+        units="1 (boolean)",
+        pixel_population=(
+            "Every (ping_time, range_sample) cell in the echogram grid; "
+            "1 = pixel flagged as impulsive noise, 0 = clean."
+        ),
+        loudness_meaning=(
+            "Not meaningful: this is a binary mask, not a dB-domain "
+            "quantity.  Clustering on it is not recommended; use it as "
+            "a filter on Sv instead."
+        ),
+        colour_meaning=(
+            "Not meaningful for the (alpha, beta) framework: a binary "
+            "vector has no per-pixel mean to centre against."
+        ),
+        detection_filtered=False,
+        notes=(
+            "Plot with categorical autoscale (the plotters detect "
+            "boolean / 0-1 dtypes automatically).  The clustering "
+            "tools will run, but the math is degenerate."
         ),
     ),
 }
